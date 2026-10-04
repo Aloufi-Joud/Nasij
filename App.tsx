@@ -120,6 +120,7 @@ export default function App() {
 
   const latest = useRef<Reading | null>(null);
   const sosRef = useRef(false);
+  const wasTriggered = useRef(false);
   const history = useRef<number[]>([]);
   const zoneRef = useRef<Zone | null>(null);
   const candidate = useRef<{ zone: Zone | null; since: number }>({ zone: null, since: 0 });
@@ -173,17 +174,22 @@ export default function App() {
       if (!r) return;
 
       // Emergency: double press seen (alarm flag on, or the press count went up)
+      // Alert only on a NEW press: the count goes up, or the alarm flag turns on.
+      // The flag stays on for the whole alarm broadcast (30 s), so we ignore it
+      // while it stays on, otherwise "تم الاستلام" would bring the alert right back.
       const a = alarm.current;
       if (a) {
-        const newPress = lastCount.current !== null && a.count > lastCount.current;
-        if (lastCount.current === null || a.count > lastCount.current) lastCount.current = a.count;
-        if (newPress || (a.triggered && !sosRef.current)) {
-          if (!sosRef.current) {
-            sosRef.current = true;
-            setSos(true);
-            setLog((old) => [{ time: new Date().toLocaleTimeString(), zone: 'SOS' as LogKind }, ...old].slice(0, 20));
-            Vibration.vibrate([0, 800, 300, 800, 300, 800]);
-          }
+        const firstSeen = lastCount.current === null;
+        const newPress =
+          (!firstSeen && a.count > (lastCount.current ?? 0)) ||
+          (!firstSeen && a.triggered && !wasTriggered.current);
+        lastCount.current = Math.max(a.count, lastCount.current ?? 0);
+        wasTriggered.current = a.triggered;
+        if (newPress && !sosRef.current) {
+          sosRef.current = true;
+          setSos(true);
+          setLog((old) => [{ time: new Date().toLocaleTimeString(), zone: 'SOS' as LogKind }, ...old].slice(0, 20));
+          Vibration.vibrate([0, 800, 300, 800, 300, 800]);
         }
       }
 
