@@ -1,0 +1,38 @@
+# Nasij
+
+A smart safety network for large events. A low-cost, reusable bracelet links to the family's phone app, alerts them before a child wanders off, and turns nearby volunteers' phones into a search network with temporary permissions. The bracelet carries no personal data.
+
+## Files
+
+| File | What it is |
+|------|------------|
+| `App.tsx` | Phone app (React Native / Expo) |
+| `app.json` | App settings and permissions |
+| `nasij_scanner.py` | Laptop scanner (acts as a volunteer device) |
+
+## Bracelet
+
+MOKO W6R (shows as `MK Button`), configured with the BeaconX Pro / MK Button app:
+
+- Power saving mode: off
+- Double press mode: Alarm info, Alarm mode on, Stay advertising before triggered on
+
+## Run the phone app
+
+```
+npx create-expo-app@latest nasij --template blank-typescript
+cd nasij
+npx expo install react-native-ble-plx expo-dev-client react-native-maps expo-location
+```
+
+Replace `App.tsx` and `app.json` with the files in this repo, then:
+
+- First install on iPhone (needs a Mac with Xcode): `npx expo run:ios --device`
+- Daily development (Mac or Windows): `npx expo start`
+
+## Run the laptop scanner
+
+```
+py -m pip install bleak
+py nasij_scanner.py
+```
