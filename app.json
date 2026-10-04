@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "نسيج",
+    "slug": "nasij",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "ios": {
+      "bundleIdentifier": "com.joud.nasij"
+    },
+    "plugins": [
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "bluetoothAlwaysPermission": "نسيج يستخدم البلوتوث للتعرف على سوار طفلك"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "نسيج يعرض موقعك على الخريطة عشان يبين لك مكان طفلك التقريبي"
+        }
+      ]
+    ]
+  }
+}
