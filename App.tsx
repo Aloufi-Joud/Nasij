@@ -6,6 +6,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { BleManager, Device, State } from 'react-native-ble-plx';
 import MapView, { Circle } from 'react-native-maps';
 import * as Location from 'expo-location';
+import { C } from './src/theme';
+import type { Kind } from './src/mock';
 
 const manager = new BleManager();
 // Linked bracelet number (MAC, printed under the QR on the back). Set in the app.
@@ -20,39 +22,22 @@ const TX_AT_1M = -59;       // average signal at 1 metre (calibrate with the lap
 const PATH_LOSS = 2.5;      // how fast the signal fades (2 = open air, 3 = crowded)
 
 type Zone = 'NEAR' | 'MEDIUM' | 'FAR' | 'LOST';
-type LogKind = Zone | 'SOS';
+type LogKind = Zone | 'SOS' | 'FALL';
+type AlertKind = 'SOS' | 'FALL';
 type Trend = 'approaching' | 'away' | 'steady';
 type Reading = { id: string; rssi: number; smooth: number; trend: Trend; lastSeen: number };
 
-// Colors from the original prototype
-const C = {
-  primary: '#0E3F3C',
-  accent: '#5E8C85',
-  mint: '#A8C8C4',
-  bg: '#F4F4E9',
-  card: '#FFFFFF',
-  border: '#E8E4D8',
-  text: '#1A1A1A',
-  muted: '#6B7280',
-  faint: '#9CA3AF',
-  safe: '#1B6B3A',
-  warn: '#D4841A',
-  danger: '#C0392B',
-  warnBg: '#FFF8E6',
-  warnBorder: '#F0D080',
-  dangerBg: '#FDECEA',
-};
-
 // The person wearing the bracelet, entered by the family in the app
-type Kind = 'child' | 'elder';
+// ponytail: local form shape (age as text); move to mock.ts Member when the screens are split
 type Member = { name: string; kind: Kind; age: string };
 const KIND_UI: Record<Kind, { label: string; color: string }> = {
-  child: { label: 'طفل', color: '#D4A574' },
-  elder: { label: 'كبير سن', color: '#7B8EC8' },
+  child: { label: 'طفل', color: C.child },
+  elder: { label: 'كبير سن', color: C.elder },
 };
 
 const ZONE_UI: Record<LogKind, { label: string; color: string }> = {
   SOS: { label: 'طلب مساعدة', color: C.danger },
+  FALL: { label: 'احتمال سقوط', color: C.danger },
   NEAR: { label: 'قريب منك', color: C.safe },
   MEDIUM: { label: 'مسافة متوسطة', color: C.warn },
   FAR: { label: 'بعيد عنك', color: C.danger },
@@ -155,7 +140,7 @@ export default function App() {
   const [reading, setReading] = useState<Reading | null>(null);
   const [zone, setZone] = useState<Zone | null>(null);
   const [log, setLog] = useState<{ time: string; zone: LogKind }[]>([]);
-  const [sos, setSos] = useState(false);
+  const [sos, setSos] = useState<AlertKind | null>(null);
   const [tab, setTab] = useState<Tab>('home');
   const [member, setMember] = useState<Member | null>(null);
   const [editing, setEditing] = useState(true);
@@ -163,15 +148,16 @@ export default function App() {
   const [mac, setMac] = useState<string | null>(null);
   const [typedMac, setTypedMac] = useState('');
   const nearby = useRef<Record<string, { rssi: number; seen: number }>>({});
-  const alarm = useRef<{ triggered: boolean; count: number } | null>(null);
-  const lastCount = useRef<number | null>(null);
+  // Latest alarm info per bracelet slot: 0x21 = double press, 0x23 = no movement (possible fall)
+  const alarm = useRef<Record<number, { triggered: boolean; count: number }>>({});
+  const lastCount = useRef<Record<number, number>>({});
   const [now, setNow] = useState(Date.now());
   const [me, setMe] = useState<{ latitude: number; longitude: number } | null>(null);
   const lastRadius = useRef(10);
 
   const latest = useRef<Reading | null>(null);
   const sosRef = useRef(false);
-  const wasTriggered = useRef(false);
+  const wasTriggered = useRef<Record<number, boolean>>({});
   const history = useRef<number[]>([]);
   const zoneRef = useRef<Zone | null>(null);
   const candidate = useRef<{ zone: Zone | null; since: number }>({ zone: null, since: 0 });
@@ -203,7 +189,7 @@ export default function App() {
         const id = identify(device);
         if (!id) return;
         const a = parseAlarm(device);
-        if (a && a.frame === 0x21) alarm.current = { triggered: a.triggered, count: a.count };
+        if (a && (a.frame === 0x21 || a.frame === 0x23)) alarm.current[a.frame] = { triggered: a.triggered, count: a.count };
         const t = Date.now();
         // Coming back after being lost: start the average fresh
         if (latest.current && t - latest.current.lastSeen > LOST_AFTER_MS) history.current = [];
@@ -228,23 +214,26 @@ export default function App() {
       setReading(r);
       if (!r) return;
 
-      // Emergency: double press seen (alarm flag on, or the press count went up)
-      // Alert only on a NEW press: the count goes up, or the alarm flag turns on.
-      // The flag stays on for the whole alarm broadcast (30 s), so we ignore it
-      // while it stays on, otherwise "تم الاستلام" would bring the alert right back.
-      const a = alarm.current;
-      if (a) {
-        const firstSeen = lastCount.current === null;
-        const newPress =
-          (!firstSeen && a.count > (lastCount.current ?? 0)) ||
-          (!firstSeen && a.triggered && !wasTriggered.current);
-        lastCount.current = Math.max(a.count, lastCount.current ?? 0);
-        wasTriggered.current = a.triggered;
-        if (newPress && !sosRef.current) {
+      // Emergencies: 0x21 = double press, 0x23 = bracelet stopped moving (possible fall).
+      // Alert only on a NEW event: the count goes up, or the alarm flag turns on.
+      // The flag stays on for the whole alarm broadcast, so we ignore it while it
+      // stays on, otherwise "تم الاستلام" would bring the alert right back.
+      for (const [frame, kind] of [[0x21, 'SOS'], [0x23, 'FALL']] as const) {
+        const a = alarm.current[frame];
+        if (!a) continue;
+        const prev = lastCount.current[frame];
+        const firstSeen = prev === undefined;
+        const isNew =
+          (!firstSeen && a.count > prev) || (!firstSeen && a.triggered && !wasTriggered.current[frame]);
+        lastCount.current[frame] = Math.max(a.count, prev ?? 0);
+        wasTriggered.current[frame] = a.triggered;
+        if (!isNew) continue;
+        // Always log it, even if another alert is already on screen
+        setLog((old) => [{ time: new Date().toLocaleTimeString(), zone: kind as LogKind }, ...old].slice(0, 20));
+        Vibration.vibrate([0, 800, 300, 800, 300, 800]);
+        if (!sosRef.current) {
           sosRef.current = true;
-          setSos(true);
-          setLog((old) => [{ time: new Date().toLocaleTimeString(), zone: 'SOS' as LogKind }, ...old].slice(0, 20));
-          Vibration.vibrate([0, 800, 300, 800, 300, 800]);
+          setSos(kind);
         }
       }
 
@@ -297,8 +286,9 @@ export default function App() {
     knownIds.clear();
     history.current = [];
     latest.current = null;
-    alarm.current = null;
-    lastCount.current = null;
+    alarm.current = {};
+    lastCount.current = {};
+    wasTriggered.current = {};
     zoneRef.current = null;
     setZone(null);
     setReading(null);
@@ -323,7 +313,7 @@ export default function App() {
 
   const dismissSos = () => {
     sosRef.current = false;
-    setSos(false);
+    setSos(null);
     Vibration.cancel();
   };
 
@@ -381,7 +371,7 @@ export default function App() {
             <View style={[s.dot, { backgroundColor: reading && !lost ? C.mint : C.faint }]} />
             <Text style={s.pillText}>{reading && !lost ? 'سوار واحد نشط' : 'لا يوجد سوار نشط'}</Text>
           </View>
-          {(warn || sos) && (
+          {(warn || !!sos) && (
             <View style={[s.pill, { backgroundColor: 'rgba(212,132,26,0.25)' }]}>
               <Ionicons name="warning-outline" size={14} color="#FFC857" />
               <Text style={[s.pillText, { color: '#FFC857', fontWeight: '700' }]}>تنبيه</Text>
@@ -392,13 +382,15 @@ export default function App() {
 
       <ScrollView contentContainerStyle={s.body}>
         {/* Emergency */}
-        {sos && (
+        {!!sos && (
           <View style={s.sos}>
             <View style={s.sosIcon}>
               <Ionicons name="alert" size={30} color={C.danger} />
             </View>
-            <Text style={s.sosTitle}>طلب مساعدة</Text>
-            <Text style={s.sosText}>{who} ضغط زر الطوارئ في السوار</Text>
+            <Text style={s.sosTitle}>{sos === 'FALL' ? 'احتمال سقوط' : 'طلب مساعدة'}</Text>
+            <Text style={s.sosText}>
+              {sos === 'FALL' ? `${who} ما تحرك من فترة، تأكدوا منه` : `${who} ضغط زر الطوارئ في السوار`}
+            </Text>
             <Pressable style={s.sosBtn} onPress={dismissSos}>
               <Text style={s.sosBtnText}>تم الاستلام</Text>
             </Pressable>
