@@ -18,41 +18,45 @@ Everyone builds their screens with fake data first (Phase 1). These two files ar
 
 ### `src/theme.ts`: the look
 
-- `C`: colours from the prototype (`C.primary`, `C.danger`, ...)
-- `F`: font sizes
-- `S`: ready styles: `S.card`, `S.title`, `S.label`, `S.input`, `S.button`, `S.buttonText`, `S.dangerButton`, `S.row`
+- `C`: colours from the prototype (`C.primary`, `C.danger`, `C.safeBg`, `C.child`, ...)
+- `F`: font sizes (`F.title`, `F.h1`, `F.h2`, `F.body`, `F.small`, `F.tiny`)
+- `ui`: ready styles: `ui.card`, `ui.row`, `ui.sectionTitle`, `ui.caption`, `ui.text`, `ui.muted`, `ui.btn` / `ui.btnText`, `ui.btnGhost` / `ui.btnGhostText`, `ui.strip` / `ui.stripText`, `ui.dot`
 
-Use these instead of writing colour codes by hand, so the app and the web pages look the same. App text is Arabic: rows use `row-reverse` and text aligns right. The file has no React Native import, so the web pages can import it too.
+Use these instead of writing colour codes by hand, so the app and the web pages look the same. App text is Arabic: rows use `row-reverse` and text aligns right. The file only has a type import from React Native, so the web pages can import it too.
 
 ```ts
-import { C, S } from '../../theme';
-<View style={S.card}><Text style={S.title}>...</Text></View>
+import { C, ui } from '../../theme';
+<View style={ui.card}><Text style={ui.sectionTitle}>...</Text></View>
 ```
 
 ### `src/mock.ts`: fake data and the data model
 
-**Why:** nobody waits for anybody. The volunteer screens and the dashboard can be built now, before Firebase exists, and every case (lost child, emergency, closed report, health condition) can be clicked through without a real lost child.
+**Why:** nobody waits for anybody. The volunteer screens and the dashboard can be built now, before Firebase exists, and every case (lost child, emergency, possible fall, health condition) can be clicked through without a real lost child.
 
 **The types are the contract.** Firebase (Phase 2) copies them exactly, so when the fake data is swapped for live data, the screens do not change. Do not rename or change a field on your own; agree with the team first.
 
 | Type | What it is |
 |------|------------|
-| `Member` | Person wearing a bracelet: name, `child` or `elder`, age, optional `health`, `braceletMac` |
-| `Bracelet` | Bracelet number (MAC), linked member, battery |
-| `Report` | A case: `lost`, `sos`, `fall` or `passerby`; status `open` / `searching` / `closed`; clothing, photo, assigned volunteer, close reason `found` / `security` |
-| `Volunteer` | Name, on duty, location, zone |
-| `Sighting` | A volunteer's phone heard a reported bracelet: signal and location |
-| `Zone` | Area of the event, for the dashboard |
+| `Member` | Person wearing a bracelet: name, `child` or `elder`, age, optional `health`, `braceletId` |
+| `Health` | `condition` and `notes` (what a helper should do) |
+| `Report` | A case: type `lost`, `emergency` or `fall`; status `open` / `searching` / `closed`; a copy of the member's name, kind and age; photo, `description` (clothing), `health`, `area` and `location`; `assignedVolunteerId`; `closedAs` `found` / `security` |
+| `PasserbyReport` | Passer-by tapped the NFC sticker or QR: bracelet number only, no personal data |
+| `Volunteer` | Name, on duty, area, location |
+| `Sighting` | A volunteer's phone heard a reported bracelet: signal, area and location |
+| `Zone` | Area of the event with a centre and radius, for the dashboard map |
 
-Fake lists: `members`, `bracelets`, `reports`, `volunteers`, `sightings`, `zones`.
+The report keeps its own copy of the member's name and health, so a volunteer sees only that one case, and the copy is deleted when the case closes.
+
+Fake lists: `members`, `reports`, `volunteers`, `ME` (the current volunteer), `sightings`, `passerbyReports`, `zones`.
 
 ```ts
-import { reports, members } from '../../mock';
-const report = reports[0]; // lost child, being searched
-const child = members.find((m) => m.id === report.memberId);
+import { reports } from '../../mock';
+const report = reports[0]; // lost child
+report.member.name;        // "سنا"
+report.description;        // clothing
 ```
 
-`photo` is `null` for now. Later it is a small base64 image stored inside the report (the free Firebase plan has no Storage).
+`photo` is a small base64 image stored inside the report (the free Firebase plan has no Storage).
 
 ### Folders: edit only your own
 
