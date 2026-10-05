@@ -6,7 +6,7 @@ A smart safety network for large events. A low-cost, reusable bracelet links to 
 
 | File | What it is |
 |------|------------|
-| `App.tsx` | Phone app (React Native / Expo) |
+| `App.tsx` | Phone app entry (React Native / Expo) |
 | `app.json` | App settings and permissions |
 | `src/theme.ts` | Shared colours, font sizes and styles |
 | `src/mock.ts` | Fake data and the agreed data model |
@@ -77,16 +77,27 @@ MOKO W6R (shows as `MK Button`), configured with the BeaconX Pro / MK Button app
 
 ## Run the phone app
 
-```
-npx create-expo-app@latest nasij --template blank-typescript
-cd nasij
-npx expo install react-native-ble-plx expo-dev-client react-native-maps expo-location
-```
+The repo is a complete Expo project. On Windows use the Command Prompt, not PowerShell.
 
-Replace `App.tsx` and `app.json` with the files in this repo, then:
+```
+git clone https://github.com/Aloufi-Joud/Nasij.git
+cd Nasij
+npm install
+```
 
 - First install on iPhone (needs a Mac with Xcode): `npx expo run:ios --device`
-- Daily development (Mac or Windows): `npx expo start`
+- Daily development (Mac or Windows, same Wi-Fi): `npx expo start`, or `npx expo start --tunnel`
+- After pulling new code: `git pull`, then `npm install` if `package.json` changed
+
+## App structure
+
+| File | What it is |
+|------|------------|
+| `App.tsx` | App shell: login, then family or volunteer screens. The switch button in the header changes role and keeps each side's state |
+| `src/screens/LoginScreen.tsx` | Login and role choice (fake login in Phase 1) |
+| `src/screens/family/` | Family app: home, map, alerts, emergency card, "my child is lost", "found" |
+| `src/screens/volunteer/` | Volunteer app (see its README) |
+| `src/components/` | Shared `Header`, `BottomNav`, `Banner`, `Button` |
 
 ## Run the laptop scanner
 
