@@ -1,0 +1,190 @@
+// Proximity: big "approaching / moving away" indicator and signal bars.
+// Phase 1 runs on useFakeSignal; Phase 2 passes real readings from src/ble with the same shape.
+import { useEffect, useRef } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import type { ComponentProps } from 'react';
+import { C, F, ui } from '../../theme';
+import type { Report } from '../../mock';
+import ReportPhoto from './ReportPhoto';
+import { TYPE_UI, whoLine } from './labels';
+import { bars, estimateMetres, zoneOf, type Signal, type Trend } from './useFakeSignal';
+
+type Icon = ComponentProps<typeof Ionicons>['name'];
+type Props = {
+  report: Report;
+  signal: Signal | null; // null = not heard yet
+  now: number;
+  onRestart?: () => void; // demo only
+  onHealth: () => void;
+  onClose: () => void;
+};
+
+const TREND_VIEW: Record<Trend, { label: string; hint: string; color: string; bg: string; icon: Icon }> = {
+  approaching: { label: 'تقترب منه', hint: 'استمر في نفس الاتجاه', color: C.safe, bg: C.safeBg, icon: 'arrow-up' },
+  away: { label: 'تبتعد عنه', hint: 'ارجع للاتجاه اللي جيت منه', color: C.danger, bg: C.dangerBg, icon: 'arrow-down' },
+  steady: { label: 'المسافة ثابتة', hint: 'جرّب تمشي باتجاه مختلف', color: C.accent, bg: C.techBg, icon: 'remove' },
+};
+
+export default function ProximityScreen({ report: r, signal, now, onRestart, onHealth, onClose }: Props) {
+  const zone = zoneOf(signal, now);
+  const lost = zone === 'LOST';
+  const heard = !!signal && !lost;
+  const view = heard
+    ? TREND_VIEW[signal.trend]
+    : {
+        label: lost ? 'انقطعت الإشارة' : 'لم يلتقط جوالك السوار بعد',
+        hint: lost ? 'ارجع لآخر مكان التقطت فيه الإشارة' : `امشِ في المنطقة: ${r.area}`,
+        color: lost ? C.danger : C.faint,
+        bg: lost ? C.dangerBg : '#F0EEE6',
+        icon: (lost ? 'close' : 'radio-outline') as Icon,
+      };
+  const strength = heard ? bars(signal.smooth) : 0;
+  const metres = heard ? estimateMetres(signal.smooth) : null;
+  const ago = signal ? Math.round((now - signal.lastSeen) / 1000) : null;
+  const lostChild = r.type === 'lost';
+
+  // Pulse while searching; faster when close
+  const pulse = useRef(new Animated.Value(0)).current;
+  const period = strength >= 3 ? 700 : strength >= 1 ? 1100 : 1600;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(pulse, { toValue: 1, duration: period, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+    );
+    pulse.setValue(0);
+    loop.start();
+    return () => loop.stop();
+  }, [period, pulse]);
+  const ring = {
+    opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] }),
+    transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.35] }) }],
+  };
+
+  return (
+    <>
+      {/* Who we are looking for */}
+      <View style={[ui.card, s.who]}>
+        <ReportPhoto report={r} size={58} />
+        <View style={{ flex: 1 }}>
+          <View style={s.whoTop}>
+            <Text style={s.whoName}>{r.member.name}</Text>
+            <View style={[s.chip, { backgroundColor: TYPE_UI[r.type].bg }]}>
+              <Text style={[s.chipText, { color: TYPE_UI[r.type].color }]}>{TYPE_UI[r.type].label}</Text>
+            </View>
+          </View>
+          <Text style={ui.muted}>{whoLine(r)}</Text>
+          <Text style={s.desc} numberOfLines={2}>
+            {r.description}
+          </Text>
+        </View>
+      </View>
+
+      {zone === 'NEAR' && (
+        <View style={[ui.strip, { backgroundColor: C.safeBg, marginTop: 12, marginBottom: 0 }]}>
+          <Ionicons name="eye-outline" size={16} color={C.safe} />
+          <Text style={[ui.stripText, { color: C.safe }]}>السوار قريب جدًا منك، ابحث حولك بعينك</Text>
+        </View>
+      )}
+
+      {/* Big direction indicator */}
+      <View style={s.center}>
+        <View style={s.circleWrap}>
+          {heard && <Animated.View style={[s.ring, { borderColor: view.color }, ring]} />}
+          <View style={[s.circle, { backgroundColor: view.bg, borderColor: view.color }]}>
+            <Ionicons name={view.icon} size={76} color={view.color} />
+          </View>
+        </View>
+        <Text style={[s.trendLabel, { color: view.color }]}>{view.label}</Text>
+        <Text style={s.trendHint}>{view.hint}</Text>
+      </View>
+
+      {/* Signal, distance, last heard */}
+      <View style={s.metrics}>
+        <View style={s.metric}>
+          <View style={s.bigBars}>
+            {[1, 2, 3, 4].map((i) => (
+              <View
+                key={i}
+                style={[
+                  s.bigBar,
+                  {
+                    height: 8 + i * 9,
+                    backgroundColor:
+                      i <= strength ? (strength <= 1 ? C.danger : strength <= 2 ? C.warn : C.safe) : C.barOff,
+                  },
+                ]}
+              />
+            ))}
+          </View>
+          <Text style={s.metricLabel}>قوة الإشارة</Text>
+        </View>
+        <View style={s.metric}>
+          <Text style={s.metricNum}>{metres == null ? '—' : metres <= 2 ? '≤ 2' : `${metres}`}</Text>
+          <Text style={s.metricLabel}>متر تقريبًا</Text>
+        </View>
+        <View style={s.metric}>
+          <Text style={s.metricNum}>{ago == null ? '—' : ago < 2 ? 'الآن' : `${ago} ث`}</Text>
+          <Text style={s.metricLabel}>آخر إشارة</Text>
+        </View>
+      </View>
+
+      <View style={s.actions}>
+        <Pressable style={ui.btn} onPress={onClose}>
+          <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
+          <Text style={ui.btnText}>{lostChild ? 'وجدته، أغلق البلاغ' : 'وصلت إليه، أغلق البلاغ'}</Text>
+        </Pressable>
+        {r.health && (
+          <Pressable style={ui.btnGhost} onPress={onHealth}>
+            <Ionicons name="medkit-outline" size={18} color={C.danger} />
+            <Text style={ui.btnGhostText}>الحالة الصحية</Text>
+          </Pressable>
+        )}
+      </View>
+
+      {/* Demo values: removed in Phase 2 */}
+      <View style={s.tech}>
+        <Text style={s.techText}>
+          قيم وهمية للتجربة
+          {/* ⁦ ⁩ keep "-92" from flipping to "92-" inside Arabic text */}
+          {signal ? ` · الإشارة الآن ⁦${signal.rssi}⁩ · المتوسط ⁦${signal.smooth}⁩` : ''}
+        </Text>
+        {onRestart && (
+          <Pressable onPress={onRestart} hitSlop={8}>
+            <Text style={s.restart}>إعادة المحاكاة</Text>
+          </Pressable>
+        )}
+      </View>
+    </>
+  );
+}
+
+const s = StyleSheet.create({
+  who: { flexDirection: 'row-reverse', gap: 12, alignItems: 'flex-start', padding: 14 },
+  whoTop: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },
+  whoName: { color: C.primary, fontSize: F.h2, fontWeight: '700', textAlign: 'right' },
+  chip: { borderRadius: 8, paddingVertical: 3, paddingHorizontal: 8 },
+  chipText: { fontSize: 11.5, fontWeight: '700' },
+  desc: { color: C.text, fontSize: F.small, textAlign: 'right', marginTop: 5, lineHeight: 20 },
+
+  center: { alignItems: 'center', marginTop: 26 },
+  circleWrap: { width: 190, height: 190, alignItems: 'center', justifyContent: 'center' },
+  ring: { position: 'absolute', width: 170, height: 170, borderRadius: 85, borderWidth: 3 },
+  circle: { width: 170, height: 170, borderRadius: 85, borderWidth: 4, alignItems: 'center', justifyContent: 'center' },
+  trendLabel: { fontSize: 28, fontWeight: '800', marginTop: 12, textAlign: 'center' },
+  trendHint: { color: C.muted, fontSize: 14, marginTop: 4, textAlign: 'center' },
+
+  metrics: { flexDirection: 'row-reverse', gap: 10, marginTop: 22 },
+  metric: {
+    flex: 1, alignItems: 'center', justifyContent: 'flex-end', minHeight: 92,
+    backgroundColor: C.card, borderWidth: 1.5, borderColor: C.border, borderRadius: 16, padding: 12,
+  },
+  bigBars: { flexDirection: 'row', alignItems: 'flex-end', gap: 4, height: 46 },
+  bigBar: { width: 9, borderRadius: 3 },
+  metricNum: { color: C.primary, fontSize: 22, fontWeight: '700', textAlign: 'center' },
+  metricLabel: { color: C.muted, fontSize: 12, marginTop: 6, textAlign: 'center' },
+
+  actions: { gap: 10, marginTop: 22 },
+  tech: { marginTop: 18, padding: 12, borderRadius: 14, backgroundColor: C.techBg },
+  techText: { color: C.primary, fontSize: 12, textAlign: 'right' },
+  restart: { color: C.accent, fontSize: 12.5, fontWeight: '700', textAlign: 'right', marginTop: 6 },
+});
