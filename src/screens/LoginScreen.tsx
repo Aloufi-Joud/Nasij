@@ -1,12 +1,11 @@
-// Login and role choice. Phase 1: no real login, the phone number is not checked.
-// Phase 2: Firebase Auth.
+// Login and role choice. Phase 1: no real login, email and password are not checked.
+// Phase 2: Firebase Auth with email and password.
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { C, F, ui } from '../theme';
 import { Button } from '../components/Button';
 import type { IconName } from '../components/Header';
-import { latinDigits } from '../components/digits';
 
 export type Role = 'family' | 'volunteer';
 
@@ -16,9 +15,11 @@ const ROLES: { key: Role; title: string; text: string; icon: IconName }[] = [
 ];
 
 export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void }) {
-  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [role, setRole] = useState<Role | null>(null);
-  const ready = phone.length === 10 && !!role;
+  // Firebase Auth needs a valid email and a password of 6 or more characters
+  const ready = /^\S+@\S+\.\S+$/.test(email.trim()) && password.length >= 6 && !!role;
 
   return (
     <ScrollView style={s.screen} contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
@@ -28,15 +29,31 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
       <Text style={s.name}>نسيج</Text>
       <Text style={s.tagline}>ما أحد يضيع في الزحام</Text>
 
-      <Text style={ui.caption}>رقم الجوال</Text>
+      <Text style={ui.caption}>البريد الإلكتروني</Text>
       <TextInput
         style={s.input}
-        value={phone}
-        onChangeText={(t) => setPhone(latinDigits(t).slice(0, 10))}
-        placeholder="05xxxxxxxx"
+        value={email}
+        onChangeText={setEmail}
+        placeholder="name@example.com"
         placeholderTextColor={C.faint}
-        keyboardType="phone-pad"
-        textAlign="center"
+        keyboardType="email-address"
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoComplete="email"
+        textAlign="left"
+      />
+
+      <Text style={ui.caption}>كلمة المرور</Text>
+      <TextInput
+        style={s.input}
+        value={password}
+        onChangeText={setPassword}
+        placeholder="٦ أحرف أو أكثر"
+        placeholderTextColor={C.faint}
+        secureTextEntry
+        autoCapitalize="none"
+        autoComplete="password"
+        textAlign="right"
       />
 
       <Text style={ui.caption}>أنا</Text>
@@ -72,7 +89,7 @@ const s = StyleSheet.create({
   tagline: { color: C.muted, fontSize: F.body, textAlign: 'center', marginTop: 4, marginBottom: 10 },
   input: {
     backgroundColor: '#fff', borderWidth: 1.5, borderColor: C.inputBorder, borderRadius: 12,
-    paddingVertical: 13, fontSize: 18, color: C.text, letterSpacing: 1,
+    paddingVertical: 13, paddingHorizontal: 14, fontSize: 16, color: C.text,
   },
   role: { flexDirection: 'row-reverse', alignItems: 'center', gap: 12, marginBottom: 10 },
   roleOn: { borderColor: C.primary },

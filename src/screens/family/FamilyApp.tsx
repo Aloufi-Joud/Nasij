@@ -1,13 +1,17 @@
 // Nasij family app: find the bracelet, measure signal, alert when it moves away
 // Same logic as the tested laptop scanner (nasij_scanner.py)
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, Vibration, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, Vibration, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { BleManager, Device, State } from 'react-native-ble-plx';
+import { State, type Device } from 'react-native-ble-plx';
 import MapView, { Circle } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { C, ui } from '../../theme';
-import type { Kind, Report } from '../../mock';
+import type { Kind, Point, Report } from '../../mock';
+import { metresBetween } from '../../components/geo';
+import { PAIR_RSSI, newPairing, pairStep, type Pairing } from '../../ble/pairing';
+import { listen, onBluetoothState } from '../../ble/scanner';
+import { LOST_AFTER_MS, WINDOW, braceletMac, cleanMac, parseAlarm, summarize, type Trend } from '../../ble/signal';
 import { Banner } from '../../components/Banner';
 import { BottomNav } from '../../components/BottomNav';
 import { Button } from '../../components/Button';
@@ -16,22 +20,23 @@ import { latinDigits } from '../../components/digits';
 import FoundScreen from './FoundScreen';
 import LostScreen from './LostScreen';
 
-const manager = new BleManager();
 // Linked bracelet number (MAC, printed under the QR on the back). Set in the app.
 let linkedMac: string | null = null;
-const LOST_AFTER_MS = 10000; // no packet for 10 s = signal lost
-const WINDOW = 6;           // average the last 6 readings
 const NEAR = -65;           // stronger than this = near
 const FAR = -80;            // weaker than this = far
 const HOLD_MS = 3000;       // a new state must last 3 s before we show it
 const GAP = 4;              // extra margin needed to leave NEAR or FAR
 const TX_AT_1M = -59;       // average signal at 1 metre (calibrate with the laptop scanner)
 const PATH_LOSS = 2.5;      // how fast the signal fades (2 = open air, 3 = crowded)
+const PAIR_TIMEOUT_MS = 60000; // linking gives up waiting for the press after 1 minute
+// ponytail: event boundary = circle around the family's first location, so it can be tested anywhere.
+// Phase 2: the real event boundary from Firestore.
+const EVENT_RADIUS_M = 150;
 
 type Zone = 'NEAR' | 'MEDIUM' | 'FAR' | 'LOST';
-type LogKind = Zone | 'SOS' | 'FALL' | 'REPORT' | 'FOUND';
+type LogKind = Zone | 'SOS' | 'FALL' | 'REPORT' | 'FOUND' | 'EDGE';
+type PairView = { mac: string; heard: boolean; near: boolean; timedOut: boolean };
 type AlertKind = 'SOS' | 'FALL';
-type Trend = 'approaching' | 'away' | 'steady';
 type Reading = { id: string; rssi: number; smooth: number; trend: Trend; lastSeen: number };
 
 // The person wearing the bracelet, entered by the family in the app
@@ -48,6 +53,7 @@ const ZONE_UI: Record<LogKind, { label: string; color: string }> = {
   FALL: { label: 'احتمال سقوط', color: C.danger },
   REPORT: { label: 'بلاغ ضياع للمتطوعين', color: C.danger },
   FOUND: { label: 'تم العثور عليه وانقفل البلاغ', color: C.safe },
+  EDGE: { label: 'قرب حدود الفعالية', color: C.danger },
   NEAR: { label: 'قريب منك', color: C.safe },
   MEDIUM: { label: 'مسافة متوسطة', color: C.warn },
   FAR: { label: 'بعيد عنك', color: C.danger },
@@ -68,25 +74,8 @@ function bars(smooth: number) {
   return 0;
 }
 
-function toBytes(b64: string) {
-  return Array.from(atob(b64), (c) => c.charCodeAt(0));
-}
-function toHex(bytes: number[]) {
-  return bytes.map((x) => x.toString(16).padStart(2, '0')).join('').toUpperCase();
-}
-
 // Phone-side IDs of devices already confirmed as our bracelet
 const knownIds = new Set<string>();
-
-// Any MOKO bracelet nearby: service data EA00 (scan response), last 6 bytes = its MAC
-function braceletMac(device: Device): string | null {
-  for (const [uuid, b64] of Object.entries(device.serviceData ?? {})) {
-    if (!b64 || !uuid.toLowerCase().includes('ea00')) continue;
-    const b = toBytes(b64);
-    if (b.length >= 6) return toHex(b.slice(-6));
-  }
-  return null;
-}
 
 // Returns the linked bracelet's number, or null if this is not it
 function identify(device: Device): string | null {
@@ -95,23 +84,6 @@ function identify(device: Device): string | null {
   if (braceletMac(device) === linkedMac) {
     knownIds.add(device.id);
     return linkedMac;
-  }
-  return null;
-}
-
-// Bracelet number as printed: 12 hex characters
-function cleanMac(text: string) {
-  return text.toUpperCase().replace(/[^0-9A-F]/g, '').slice(0, 12);
-}
-
-// MOKO alarm info (service data FEE0): frame type, status flag, trigger count
-// Frame 0x21 = double press slot. Status bit1 = alarm triggered.
-function parseAlarm(device: Device) {
-  for (const [uuid, b64] of Object.entries(device.serviceData ?? {})) {
-    if (!b64 || !uuid.toLowerCase().includes('fee0')) continue;
-    const b = toBytes(b64);
-    if (b.length < 4) continue;
-    return { frame: b[0], triggered: (b[1] & 0x02) !== 0, count: (b[2] << 8) | b[3] };
   }
   return null;
 }
@@ -142,10 +114,6 @@ const CIRCLE_FILL: Record<Zone, string> = {
 type Tab = 'home' | 'map' | 'alerts';
 type Screen = 'lost' | 'found' | null;
 
-function avg(list: number[]) {
-  return list.reduce((a, b) => a + b, 0) / list.length;
-}
-
 export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }) {
   const [bt, setBt] = useState<string>('');
   const [reading, setReading] = useState<Reading | null>(null);
@@ -167,8 +135,11 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
   const alarm = useRef<Record<number, { triggered: boolean; count: number }>>({});
   const lastCount = useRef<Record<number, number>>({});
   const [now, setNow] = useState(Date.now());
-  const [me, setMe] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [me, setMe] = useState<Point | null>(null);
+  const [eventCenter, setEventCenter] = useState<Point | null>(null);
   const lastRadius = useRef(10);
+  const pairing = useRef<Pairing | null>(null);
+  const [pairView, setPairView] = useState<PairView | null>(null);
 
   const latest = useRef<Reading | null>(null);
   const sosRef = useRef(false);
@@ -185,41 +156,37 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
       if (status !== 'granted') return;
       watch = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.High, distanceInterval: 1 },
-        (pos) => setMe({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+        (pos) => {
+          const p = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+          setMe(p);
+          setEventCenter((c) => c ?? p);
+        },
       );
     })();
     return () => watch?.remove();
   }, []);
 
   useEffect(() => {
-    const sub = manager.onStateChange((state) => {
-      setBt(state);
-      if (state !== State.PoweredOn) return;
-      manager.startDeviceScan(null, { allowDuplicates: true }, (error, device) => {
-        if (error || !device || device.rssi == null) return;
-        // Remember nearby bracelets for the link screen
-        const mac = braceletMac(device);
-        if (mac) nearby.current[mac] = { rssi: device.rssi, seen: Date.now() };
+    const stopState = onBluetoothState(setBt);
+    const stopScan = listen((device) => {
+      if (device.rssi == null) return;
+      // Remember nearby bracelets for the link screen
+      const mac = braceletMac(device);
+      if (mac) nearby.current[mac] = { rssi: device.rssi, seen: Date.now() };
 
-        const id = identify(device);
-        if (!id) return;
-        const a = parseAlarm(device);
-        if (a && (a.frame === 0x21 || a.frame === 0x23)) alarm.current[a.frame] = { triggered: a.triggered, count: a.count };
-        const t = Date.now();
-        // Coming back after being lost: start the average fresh
-        if (latest.current && t - latest.current.lastSeen > LOST_AFTER_MS) history.current = [];
-        history.current = [...history.current, device.rssi].slice(-WINDOW);
-        const full = avg(history.current);
-        const diff = avg(history.current.slice(-3)) - full;
-        latest.current = {
-          id,
-          rssi: device.rssi,
-          smooth: Math.round(full),
-          trend: diff > 3 ? 'approaching' : diff < -3 ? 'away' : 'steady',
-          lastSeen: t,
-        };
-      });
-    }, true);
+      // Linking: wait for a new double press from that bracelet while it is held close
+      if (pairing.current) pairStep(pairing.current, device.id, mac, device.rssi, parseAlarm(device));
+
+      const id = identify(device);
+      if (!id) return;
+      const a = parseAlarm(device);
+      if (a && (a.frame === 0x21 || a.frame === 0x23)) alarm.current[a.frame] = { triggered: a.triggered, count: a.count };
+      const t = Date.now();
+      // Coming back after being lost: start the average fresh
+      if (latest.current && t - latest.current.lastSeen > LOST_AFTER_MS) history.current = [];
+      history.current = [...history.current, device.rssi].slice(-WINDOW);
+      latest.current = { id, rssi: device.rssi, ...summarize(history.current), lastSeen: t };
+    });
 
     // Twice a second: decide the zone and refresh the screen
     const timer = setInterval(() => {
@@ -227,6 +194,21 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
       const t = Date.now();
       setNow(t);
       setReading(r);
+
+      const p = pairing.current;
+      if (p?.pressed) {
+        pairing.current = null;
+        setPairView(null);
+        link(p.mac);
+      } else if (p) {
+        setPairView({
+          mac: p.mac,
+          heard: p.rssi !== null,
+          near: p.rssi !== null && p.rssi >= PAIR_RSSI,
+          timedOut: t - p.since > PAIR_TIMEOUT_MS,
+        });
+      }
+
       if (!r) return;
 
       // Emergencies: 0x21 = double press, 0x23 = bracelet stopped moving (possible fall).
@@ -268,8 +250,8 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
     }, 500);
 
     return () => {
-      sub.remove();
-      manager.stopDeviceScan();
+      stopState();
+      stopScan();
       clearInterval(timer);
     };
   }, []);
@@ -282,7 +264,9 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
   const radius = lastRadius.current;
   const ago = reading ? Math.round((now - reading.lastSeen) / 1000) : 0;
   const btOff = !!bt && bt !== State.PoweredOn;
-  const warn = zone === 'MEDIUM' || zone === 'FAR' || lost;
+  // Where the bracelet can be: within `radius` of the family. Warn when that circle reaches the event edge.
+  const nearEdge = !!(reading && me && eventCenter && metresBetween(eventCenter, me) + radius > EVENT_RADIUS_M);
+  const warn = zone === 'MEDIUM' || zone === 'FAR' || lost || nearEdge;
 
   const who = member?.name || 'الفرد';
   const memberColor = member ? KIND_UI[member.kind].color : C.faint;
@@ -298,6 +282,14 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
 
   const addLog = (kind: LogKind) =>
     setLog((old) => [{ time: new Date().toLocaleTimeString(), zone: kind }, ...old].slice(0, 20));
+
+  // Log and vibrate once each time the bracelet reaches the event edge
+  useEffect(() => {
+    if (!nearEdge) return;
+    addLog('EDGE');
+    Vibration.vibrate([0, 500, 200, 500]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nearEdge]);
 
   // Phase 2: create the report in Firestore; volunteers near the bracelet get temporary access
   const sendLost = (description: string, photo: string | null) => {
@@ -355,6 +347,38 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
     setMac(null);
   };
 
+  // Linking starts here: the bracelet is linked only after the press check passes
+  const startPair = (m: string) => {
+    pairing.current = newPairing(m, Date.now());
+    setPairView({ mac: m, heard: false, near: false, timedOut: false });
+    setTypedMac('');
+  };
+  const cancelPair = () => {
+    pairing.current = null;
+    setPairView(null);
+  };
+
+  // Delete the member completely: details, health, bracelet link and any open report.
+  // Phase 2: also deletes the member and the bracelet link in Firestore.
+  const removeMember = () =>
+    Alert.alert(`حذف ${who}؟`, 'بتنحذف بياناته وحالته الصحية، وينفك ربط السوار، وينقفل أي بلاغ مفتوح.', [
+      { text: 'إلغاء', style: 'cancel' },
+      {
+        text: 'حذف',
+        style: 'destructive',
+        onPress: () => {
+          unlink();
+          cancelPair();
+          setMember(null);
+          setDraft(EMPTY);
+          setEditing(true);
+          setReport(null);
+          setScreen(null);
+          setJustFound(false);
+        },
+      },
+    ]);
+
   // Bracelets heard in the last 5 s, strongest (closest) first
   const nearbyList = Object.entries(nearby.current)
     .filter(([, v]) => now - v.seen < 5000)
@@ -381,6 +405,16 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
           showsUserLocation
           initialRegion={{ ...me, latitudeDelta: 0.0004, longitudeDelta: 0.0004 }}
         >
+          {eventCenter && (
+            <Circle
+              center={eventCenter}
+              radius={EVENT_RADIUS_M}
+              strokeColor={C.primary}
+              strokeWidth={2}
+              lineDashPattern={[8, 6]}
+              fillColor="transparent"
+            />
+          )}
           {zone && (
             <Circle
               center={me}
@@ -520,10 +554,42 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
                 <Text style={[s.hint, { marginTop: 6 }]}>تظهر لمتطوع واحد بس وقت البلاغ، وتنحذف لما ينقفل</Text>
 
                 <Button label="حفظ" onPress={saveDraft} disabled={!draft.name.trim()} style={{ marginTop: 12 }} />
+                {member && <Button label="إلغاء" kind="ghost" onPress={() => setEditing(false)} style={{ marginTop: 10 }} />}
               </View>
             )}
 
-            {!mac && (
+            {!mac && pairView && (
+              <View style={[ui.card, { marginBottom: 14 }]}>
+                <Text style={s.formTitle}>تأكيد السوار</Text>
+                <Text style={s.hint}>عشان نتأكد إن السوار بيدك أنتِ، مو سوار شخص ثاني قريب منك</Text>
+                <Text style={[s.nearMac, { textAlign: 'center', marginVertical: 8 }]}>{pairView.mac}</Text>
+
+                <View style={s.stepRow}>
+                  <Ionicons
+                    name={pairView.near ? 'checkmark-circle' : 'ellipse-outline'}
+                    size={20}
+                    color={pairView.near ? C.safe : C.faint}
+                  />
+                  <Text style={s.stepText}>١. قرّبي السوار من الجوال</Text>
+                </View>
+                <View style={s.stepRow}>
+                  <Ionicons name="ellipse-outline" size={20} color={C.faint} />
+                  <Text style={s.stepText}>٢. اضغطي زر السوار ضغطتين وهو قريب (بيصفّر، هذا طبيعي)</Text>
+                </View>
+
+                {!pairView.heard && <Text style={s.empty}>ما نسمع هذا السوار حاليًا، تأكدي من الرقم</Text>}
+                {pairView.timedOut && (
+                  <Banner
+                    tone="warn"
+                    icon="alert-circle-outline"
+                    text="ما وصلنا ضغط من هذا السوار. تأكدي إنه نفس السوار اللي بيدك واضغطي مرة ثانية"
+                  />
+                )}
+                <Button label="إلغاء" kind="ghost" onPress={cancelPair} style={{ marginTop: 12 }} />
+              </View>
+            )}
+
+            {!mac && !pairView && (
               <View style={[ui.card, { marginBottom: 14 }]}>
                 <Text style={s.formTitle}>ربط السوار</Text>
                 <Text style={s.hint}>قرّبي السوار من الجوال، وبيطلع أول القائمة</Text>
@@ -535,7 +601,7 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
                       <Text style={s.nearMac}>{m}</Text>
                       <Text style={s.nearSub}>{i === 0 ? 'الأقرب' : 'قريب'} · الإشارة {v.rssi}</Text>
                     </View>
-                    <Pressable style={s.linkBtn} onPress={() => link(m)}>
+                    <Pressable style={s.linkBtn} onPress={() => startPair(m)}>
                       <Text style={s.linkText}>ربط</Text>
                     </Pressable>
                   </View>
@@ -555,7 +621,7 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
                   />
                   <Pressable
                     style={[s.linkBtn, typedMac.length !== 12 && { opacity: 0.4 }]}
-                    onPress={() => typedMac.length === 12 && link(typedMac)}
+                    onPress={() => typedMac.length === 12 && startPair(typedMac)}
                   >
                     <Text style={s.linkText}>ربط</Text>
                   </Pressable>
@@ -564,7 +630,10 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
             )}
 
             {/* Member card */}
-            <View style={[ui.card, warn && { borderColor: lost || zone === 'FAR' ? C.dangerBorder : C.warnBorder }]}>
+            <View style={[ui.card, warn && { borderColor: lost || zone === 'FAR' || nearEdge ? C.dangerBorder : C.warnBorder }]}>
+              {nearEdge && (
+                <Banner tone="danger" icon="exit-outline" text={`${who} قريب من حدود الفعالية أو خارجها`} onPress={() => setTab('map')} />
+              )}
               {(zone === 'MEDIUM' || zone === 'FAR') && (
                 <Banner tone="warn" icon="warning-outline" text={`الإشارة تضعف، ${who} يبتعد عنك`} />
               )}
@@ -576,18 +645,7 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
                 </View>
                 <View style={{ flex: 1 }}>
                   <View style={s.nameRow}>
-                    <View style={s.nameWrap}>
-                      <Text style={s.memberName}>{who}</Text>
-                      <Pressable
-                        hitSlop={10}
-                        onPress={() => {
-                          if (member) setDraft(member);
-                          setEditing(true);
-                        }}
-                      >
-                        <Ionicons name="create-outline" size={16} color={C.accent} />
-                      </Pressable>
-                    </View>
+                    <Text style={s.memberName}>{who}</Text>
                     <View style={s.bars}>
                       {[1, 2, 3, 4].map((i) => (
                         <View
@@ -633,6 +691,26 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
                   )}
                 </View>
               </View>
+
+              {member && !editing && (
+                <View style={s.memberActions}>
+                  <Pressable
+                    style={s.smallBtn}
+                    hitSlop={6}
+                    onPress={() => {
+                      setDraft(member);
+                      setEditing(true);
+                    }}
+                  >
+                    <Ionicons name="create-outline" size={15} color={C.accent} />
+                    <Text style={[s.smallBtnText, { color: C.accent }]}>تعديل البيانات</Text>
+                  </Pressable>
+                  <Pressable style={s.smallBtn} hitSlop={6} onPress={removeMember}>
+                    <Ionicons name="trash-outline" size={15} color={C.danger} />
+                    <Text style={[s.smallBtnText, { color: C.danger }]}>حذف</Text>
+                  </Pressable>
+                </View>
+              )}
 
               {/* Lost child: report it, or close the open report */}
               {member?.kind === 'child' && !report && (
@@ -741,7 +819,13 @@ const s = StyleSheet.create({
   linkText: { color: '#fff', fontSize: 14, fontWeight: '700' },
   typedRow: { flexDirection: 'row-reverse', gap: 10, alignItems: 'stretch' },
   unlink: { color: C.accent, fontSize: 12.5, fontWeight: '700', textAlign: 'right', marginTop: 6 },
-  nameWrap: { flexDirection: 'row-reverse', alignItems: 'center', gap: 6 },
+  memberActions: {
+    flexDirection: 'row-reverse', gap: 18, marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border,
+  },
+  smallBtn: { flexDirection: 'row-reverse', alignItems: 'center', gap: 5 },
+  smallBtnText: { fontSize: 13, fontWeight: '700' },
+  stepRow: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8, marginTop: 8 },
+  stepText: { flex: 1, color: C.text, fontSize: 13.5, textAlign: 'right' },
   formTitle: { color: C.primary, fontSize: 16, fontWeight: '700', textAlign: 'right', marginBottom: 6 },
   label: { color: C.muted, fontSize: 12, fontWeight: '600', textAlign: 'right', marginTop: 12, marginBottom: 6 },
   input: {

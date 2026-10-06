@@ -11,7 +11,7 @@ import DutyScreen from './DutyScreen';
 import HealthScreen from './HealthScreen';
 import ProximityScreen from './ProximityScreen';
 import { CLOSED_UI, TYPE_UI, clock } from './labels';
-import { useFakeSignal } from './useFakeSignal';
+import { useBraceletSignal } from '../../ble/scanner';
 
 type Tab = 'duty' | 'case' | 'history';
 type Step = 'proximity' | 'health' | 'close';
@@ -31,8 +31,8 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
   const [now, setNow] = useState(Date.now());
   const autoSent = useRef(false);
 
-  // Fake signal runs while a case is open, so it keeps going when switching screens
-  const fake = useFakeSignal(!!active);
+  // Real signal of the reported bracelet while a case is open, so it keeps going when switching screens
+  const bracelet = useBraceletSignal(active?.braceletId ?? null);
 
   // Clock for "قبل ٢٠ ث" labels when no signal is ticking
   useEffect(() => {
@@ -161,9 +161,8 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
           ) : step === 'proximity' ? (
             <ProximityScreen
               report={active}
-              signal={fake.signal}
-              now={fake.now}
-              onRestart={fake.restart}
+              signal={bracelet.signal}
+              now={bracelet.now}
               onHealth={() => setStep('health')}
               onClose={() => setStep('close')}
             />
