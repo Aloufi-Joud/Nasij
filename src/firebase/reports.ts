@@ -4,7 +4,7 @@
 import {
   collection, doc, getDoc, onSnapshot, query, runTransaction, where, writeBatch,
 } from 'firebase/firestore';
-import { db } from './index';
+import { auth, db } from './index';
 import type { ClosedAs, Health, Report } from '../mock';
 
 export type NewReport = Omit<Report, 'id' | 'createdAt' | 'status' | 'assignedVolunteerId' | 'closedAs' | 'closedAt'>;
@@ -15,7 +15,9 @@ const healthDoc = (id: string) => doc(db, 'reports', id, 'private', 'health');
 export async function createReport({ health, ...r }: NewReport): Promise<string> {
   const ref = doc(reports);
   const batch = writeBatch(db);
-  batch.set(ref, { ...r, createdAt: Date.now(), status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null });
+  // familyId: the rules let only this family follow and close its report
+  const familyId = auth.currentUser?.uid ?? null;
+  batch.set(ref, { ...r, familyId, createdAt: Date.now(), status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null });
   if (health) batch.set(healthDoc(ref.id), health);
   await batch.commit();
   return ref.id;

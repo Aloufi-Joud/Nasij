@@ -166,3 +166,15 @@ button.feed-row:hover { color: var(--primary); text-decoration: underline; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* Login */
+.login { max-width: 360px; margin: 12vh auto; padding: 24px 16px; background: var(--card); border: 1.5px solid var(--border); border-radius: 18px; }
+.login h1 { color: var(--primary); font-size: 24px; margin-bottom: 16px; }
+.login h1 span { font-weight: 400; color: var(--muted); font-size: 16px; }
+.login form { display: grid; gap: 12px; }
+.login label { display: grid; gap: 4px; font-weight: 600; }
+.login input { font: inherit; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: 10px; background: #fff; }
+.login button { padding: 10px; border: 0; border-radius: 12px; background: var(--primary); color: #fff; font-weight: 700; }
+.login button:disabled { opacity: 0.5; }
+.login .ghost { background: transparent; color: var(--primary); border: 1.5px solid var(--border); }
+.login-error { color: var(--danger); margin: 0; }
