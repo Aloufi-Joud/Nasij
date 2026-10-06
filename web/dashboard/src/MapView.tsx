@@ -46,19 +46,6 @@ export default function MapView({ zones, reports, volunteers, lastSignal, select
         .setContent(label)
         .addTo(m);
     }
-    for (const r of reports) {
-      if (!r.location) continue;
-      const pulse = L.circleMarker(at(r.location), {
-        pane: 'reports', radius: 9, stroke: false, fillColor: colour(r), fillOpacity: 0.5, interactive: false,
-        className: `pulse${r.type === 'lost' ? '' : ' urgent'}`,
-      }).addTo(m);
-      pulses.current.set(r.id, pulse);
-      const mk = L.circleMarker(at(r.location), { pane: 'reports', radius: 9, color: '#fff', weight: 2, fillColor: colour(r), fillOpacity: 1 })
-        .bindTooltip(text(r.member.name))
-        .on('click', () => pick.current(r.id))
-        .addTo(m);
-      markers.current.set(r.id, mk);
-    }
     m.fitBounds(bounds, { padding: [24, 24] });
     // names need room: compact when the core is small on screen (phones), hidden when zoomed far out
     const fit = () => {
@@ -79,11 +66,40 @@ export default function MapView({ zones, reports, volunteers, lastSignal, select
       m.remove();
       for (const ref of [markers, pulses, vols]) ref.current.clear();
     };
-  }, [zones, reports]);
+  }, [zones]);
 
-  // Volunteers move every tick: move existing markers instead of redrawing the map
+  // Reports change live: redraw only their markers, so the map keeps its zoom
   useEffect(() => {
     const m = map.current!;
+    const layer = L.layerGroup().addTo(m);
+    for (const r of reports) {
+      if (!r.location) continue;
+      const pulse = L.circleMarker(at(r.location), {
+        pane: 'reports', radius: 9, stroke: false, fillColor: colour(r), fillOpacity: 0.5, interactive: false,
+        className: `pulse${r.type === 'lost' ? '' : ' urgent'}`,
+      }).addTo(layer);
+      pulses.current.set(r.id, pulse);
+      const mk = L.circleMarker(at(r.location), { pane: 'reports', radius: 9, color: '#fff', weight: 2, fillColor: colour(r), fillOpacity: 1 })
+        .bindTooltip(text(r.member.name))
+        .on('click', () => pick.current(r.id))
+        .addTo(layer);
+      markers.current.set(r.id, mk);
+    }
+    return () => {
+      layer.remove();
+      markers.current.clear();
+      pulses.current.clear();
+    };
+  }, [zones, reports]);
+
+  // Volunteers move: move existing markers instead of redrawing the map, drop those gone off duty
+  useEffect(() => {
+    const m = map.current!;
+    for (const [id, mk] of vols.current) {
+      if (volunteers.some((v) => v.id === id)) continue;
+      mk.remove();
+      vols.current.delete(id);
+    }
     for (const v of volunteers) {
       const mk = vols.current.get(v.id);
       if (mk) mk.setLatLng(at(v.location));
@@ -95,7 +111,7 @@ export default function MapView({ zones, reports, volunteers, lastSignal, select
             .addTo(m),
         );
     }
-  }, [volunteers]);
+  }, [zones, volunteers]);
 
   // A volunteer heard a bracelet: flash that report's ring
   useEffect(() => {
@@ -104,7 +120,8 @@ export default function MapView({ zones, reports, volunteers, lastSignal, select
     el.classList.remove('ping');
     void (el as SVGElement).getBoundingClientRect(); // restart the animation
     el.classList.add('ping');
-  }, [lastSignal]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastSignal?.id]);
 
   useEffect(() => {
     for (const [id, mk] of markers.current) {
@@ -115,7 +132,7 @@ export default function MapView({ zones, reports, volunteers, lastSignal, select
         map.current?.panTo(mk.getLatLng(), { animate: !matchMedia('(prefers-reduced-motion: reduce)').matches });
       }
     }
-  }, [selectedId]);
+  }, [selectedId, reports]);
 
   return <div ref={box} className="map-box" />;
 }

@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { members, passerbyReports, reports as mockReports, volunteers, zones, type Report } from '../../../src/mock';
+import { useEffect, useMemo, useState } from 'react';
+import { zones, type Health, type PasserbyReport, type Report, type Volunteer } from '../../../src/mock';
+import { getReportHealth } from '../../../src/firebase/reports';
 import { useLive, zoneOf } from './live';
 import MapView from './MapView';
 
@@ -7,15 +8,8 @@ const TYPE: Record<Report['type'], string> = { lost: 'مفقود', emergency: '�
 const KIND = { child: 'طفل', elder: 'كبير سن' };
 const STATUS: Record<Report['status'], string> = { open: 'بانتظار متطوع', searching: 'متطوع يبحث', closed: 'مغلق' };
 
-// ponytail: fake data has createdAt 0; stamp staggered times on load until Firebase gives real ones
-const start = Date.now();
-const reports = mockReports.map((r, i) => ({ ...r, createdAt: r.createdAt || start - (i + 1) * 4 * 60_000 }));
-const passerby = passerbyReports.map((p) => ({ ...p, at: p.at || start - 90_000 }));
-
-const open = reports
-  .filter((r) => r.status !== 'closed')
-  // urgent first (emergency, fall), then oldest first
-  .sort((a, b) => Number(a.type === 'lost') - Number(b.type === 'lost') || a.createdAt - b.createdAt);
+// urgent first (emergency, fall), then oldest first
+const byUrgency = (a: Report, b: Report) => Number(a.type === 'lost') - Number(b.type === 'lost') || a.createdAt - b.createdAt;
 
 const rtf = new Intl.RelativeTimeFormat('ar', { numeric: 'auto' });
 const clock = new Intl.DateTimeFormat('ar', { hour: 'numeric', minute: '2-digit' });
@@ -27,7 +21,7 @@ function since(t: number, now: number) {
 }
 
 // Selected report lives in the URL (?r=r2) so a link opens the same case
-function useSelected() {
+function useSelected(open: Report[]) {
   const [id, setId] = useState(() => new URLSearchParams(location.search).get('r'));
   useEffect(() => {
     const onPop = () => setId(new URLSearchParams(location.search).get('r'));
@@ -51,10 +45,13 @@ function useNow() {
 }
 
 export default function App() {
-  const [selected, select] = useSelected();
+  const live = useLive();
+  // memo: the map redraws its report markers only when Firestore sends new reports
+  const open = useMemo(() => [...live.reports].sort(byUrgency), [live.reports]);
+  const passerby = live.passerby;
+  const [selected, select] = useSelected(open);
   const now = useNow();
-  const live = useLive(volunteers, open);
-  const onDuty = live.vols;
+  const onDuty = live.volunteers;
   const lastSignal = live.events.find((e) => e.kind === 'signal');
   // phone layout stacks the detail under the list, so bring it into view after it renders
   useEffect(() => {
@@ -71,7 +68,7 @@ export default function App() {
         </h1>
         <p className="live" role="status">
           <span className="live-dot" aria-hidden="true" />
-          مباشر <span className="num">{liveClock.format(live.at)}</span>
+          مباشر <span className="num">{liveClock.format(now)}</span>
         </p>
         <dl className="stats">
           <div>
@@ -132,7 +129,7 @@ export default function App() {
                   ) : (
                     <span className="feed-row">{e.text}</span>
                   )}
-                  <time className="muted">{since(e.at, live.at)}</time>
+                  <time className="muted">{since(e.at, now)}</time>
                 </li>
               ))}
             </ol>
@@ -145,7 +142,7 @@ export default function App() {
             ) : (
               <ul className="plain">
                 {passerby.map((p) => {
-                  const member = members.find((m) => m.braceletId === p.braceletId);
+                  const member = live.memberOf(p.braceletId);
                   const report = open.find((r) => r.braceletId === p.braceletId);
                   const label = (
                     <>
@@ -194,16 +191,27 @@ export default function App() {
         </section>
 
         <section id="detail" className="detail" aria-live="polite" tabIndex={-1}>
-          {selected ? <Detail r={selected} now={now} onClose={() => select(null)} /> : <p className="empty">اختر بلاغًا من القائمة أو من الخريطة لعرض تفاصيله.</p>}
+          {selected ? (
+            <Detail r={selected} now={now} volunteers={onDuty} passerby={passerby} onClose={() => select(null)} />
+          ) : (
+            <p className="empty">اختر بلاغًا من القائمة أو من الخريطة لعرض تفاصيله.</p>
+          )}
         </section>
       </main>
     </>
   );
 }
 
-function Detail({ r, now, onClose }: { r: Report; now: number; onClose: () => void }) {
+type DetailProps = { r: Report; now: number; volunteers: Volunteer[]; passerby: PasserbyReport[]; onClose: () => void };
+function Detail({ r, now, volunteers, passerby, onClose }: DetailProps) {
   const volunteer = volunteers.find((v) => v.id === r.assignedVolunteerId);
-  const seenBy = passerby.filter((p) => p.braceletId === r.braceletId);
+  const seenBy = passerby.filter((p) => p.braceletId.toUpperCase() === r.braceletId.toUpperCase()).sort((a, b) => a.at - b.at);
+  // Health sits in its own document (reports/{id}/private/health); security may read it
+  const [health, setHealth] = useState<Health | null>(null);
+  useEffect(() => {
+    setHealth(null);
+    getReportHealth(r.id).then(setHealth, () => {});
+  }, [r.id]);
   return (
     <article className={`t-${r.type}`}>
       <div className="detail-head">
@@ -256,10 +264,10 @@ function Detail({ r, now, onClose }: { r: Report; now: number; onClose: () => vo
         )}
       </dl>
 
-      {r.health && (
+      {health && (
         <div className="health">
-          <h3>حالة صحية: {r.health.condition}</h3>
-          <p>{r.health.notes}</p>
+          <h3>حالة صحية: {health.condition}</h3>
+          <p>{health.notes}</p>
         </div>
       )}
     </article>
