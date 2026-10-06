@@ -1,0 +1,65 @@
+// Reports in Firestore. Same shape as Report in mock.ts, except health lives in
+// reports/{id}/private/health: rules work per document, so this is the only way
+// to show health to the assigned volunteer alone.
+import {
+  collection, doc, getDoc, onSnapshot, query, runTransaction, where, writeBatch,
+} from 'firebase/firestore';
+import { db } from './index';
+import type { ClosedAs, Health, Report } from '../mock';
+
+export type NewReport = Omit<Report, 'id' | 'createdAt' | 'status' | 'assignedVolunteerId' | 'closedAs' | 'closedAt'>;
+
+const reports = collection(db, 'reports');
+const healthDoc = (id: string) => doc(db, 'reports', id, 'private', 'health');
+
+export async function createReport({ health, ...r }: NewReport): Promise<string> {
+  const ref = doc(reports);
+  const batch = writeBatch(db);
+  batch.set(ref, { ...r, createdAt: Date.now(), status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null });
+  if (health) batch.set(healthDoc(ref.id), health);
+  await batch.commit();
+  return ref.id;
+}
+
+// Open and searching reports, newest first, without health. Returns the unsubscribe function.
+export function subscribeOpenReports(onChange: (reports: Report[]) => void): () => void {
+  return onSnapshot(query(reports, where('status', 'in', ['open', 'searching'])), (snap) =>
+    onChange(
+      snap.docs
+        .map((d) => ({ ...(d.data() as Omit<Report, 'id' | 'health'>), id: d.id, health: null }))
+        .sort((a, b) => b.createdAt - a.createdAt),
+    ),
+  );
+}
+
+// One report, live (family status screen, volunteer case screen). null once deleted.
+export function subscribeReport(id: string, onChange: (report: Report | null) => void): () => void {
+  return onSnapshot(doc(reports, id), (d) =>
+    onChange(d.exists() ? { ...(d.data() as Omit<Report, 'id' | 'health'>), id: d.id, health: null } : null),
+  );
+}
+
+// Transaction, so two volunteers tapping at once cannot both take the case.
+// Returns false if someone else already took it.
+export function acceptReport(id: string, volunteerId: string): Promise<boolean> {
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(doc(reports, id));
+    if (snap.data()?.status !== 'open') return false;
+    tx.update(snap.ref, { status: 'searching', assignedVolunteerId: volunteerId });
+    return true;
+  });
+}
+
+// Only the assigned volunteer (and security) may read this once rules are on
+export async function getReportHealth(id: string): Promise<Health | null> {
+  const snap = await getDoc(healthDoc(id));
+  return snap.exists() ? (snap.data() as Health) : null;
+}
+
+// Closing wipes what was only needed for the search: health and photo
+export async function closeReport(id: string, closedAs: ClosedAs): Promise<void> {
+  const batch = writeBatch(db);
+  batch.update(doc(reports, id), { status: 'closed', closedAs, closedAt: Date.now(), photo: null });
+  batch.delete(healthDoc(id));
+  await batch.commit();
+}
