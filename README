@@ -94,10 +94,53 @@ npm install
 | File | What it is |
 |------|------------|
 | `App.tsx` | App shell: login, then family or volunteer screens. The switch button in the header changes role and keeps each side's state |
-| `src/screens/LoginScreen.tsx` | Login and role choice (fake login in Phase 1) |
+| `src/screens/LoginScreen.tsx` | Login with email and password (Firebase) and role choice. A new email gets an account on the spot |
 | `src/screens/family/` | Family app: home, map, alerts, emergency card, "my child is lost", "found" |
 | `src/screens/volunteer/` | Volunteer app (see its README) |
 | `src/components/` | Shared `Header`, `BottomNav`, `Banner`, `Button` |
+
+## Firebase (Phase 2)
+
+Project `nasij-0`. Everything goes through one connection:
+
+```ts
+import { db, auth } from '../firebase';
+```
+
+| File | What it is |
+|------|------------|
+| `src/firebase/index.ts` | The connection (`db`, `auth`) |
+| `src/firebase/reports.ts` | `createReport`, `subscribeOpenReports`, `subscribeReport`, `acceptReport`, `getReportHealth`, `closeReport` |
+| `src/firebase/bracelets.ts` | `claimBracelet`, `releaseBracelet`: one family per bracelet per visit |
+| `src/firebase/members.ts` | `saveMember`, `loadMember`, `deleteMember` |
+| `src/firebase/sightings.ts`, `passerby.ts` | Person 3: write these the same way as `reports.ts` |
+| `firestore.rules` | Who may read and write what. After changing it, paste it into the Firebase console (Firestore → Rules → Publish) |
+| `src/firebase/check.mjs` | Test script, see below |
+
+**Health is stored apart from the report**, in `reports/{id}/private/health`, so only the family, the assigned volunteer and security can read it. A report in the open list never carries health.
+
+**Roles** live in `users/{uid}.role`: `family` or `volunteer` (picked at login), or `security` (set by us, for the dashboard). The rules refuse anything your role is not allowed, so log in to the app first, then test.
+
+### Test without a phone
+
+Only one of us has the app on an iPhone. To check the Firebase functions from any computer, run in the project folder:
+
+```
+node src/firebase/check.mjs test@example.com 123456
+```
+
+Any email and password (6 or more characters); the account is made on the first run. Each step prints ✓ or ✗, then `OK`. When you write a new function (`addSighting`, `createPasserbyReport`), add a few lines at the end of the file the same way. Each run leaves one closed test report, which is fine.
+
+Bluetooth, the bracelet and the screens themselves can only be tested on the phone: push your code, and the person with the iPhone pulls and runs it.
+
+### Security dashboard
+
+```
+npm --prefix web/dashboard install
+npm --prefix web/dashboard run dev
+```
+
+Open http://localhost:5173 and sign in with a security account. A normal account shows its account number on the login page: send it to whoever manages Firebase to make it a security account.
 
 ## Run the laptop scanner
 
