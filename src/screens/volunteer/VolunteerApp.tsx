@@ -1,35 +1,52 @@
-// Nasij volunteer app (Person 3). Fake data only in Phase 1.
+// Nasij volunteer app (Person 3), on live data.
 // The app shell renders <VolunteerApp /> when the chosen role is "volunteer".
+// Reports come from Firestore (src/firebase/reports.ts), the bracelet signal from src/ble.
+// Privacy: the photo, description and health of a case live only in this screen's state,
+// and are dropped when the case closes. The history tab keeps the first name and the outcome only.
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, Vibration, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, Text, Vibration, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Location from 'expo-location';
 import { C, F, ui } from '../../theme';
-import { ME, reports as MOCK_REPORTS, volunteers, type ClosedAs, type Report } from '../../mock';
+import type { ClosedAs, PasserbyReport, Report } from '../../mock';
+import { auth } from '../../firebase';
+import { acceptReport, closeReport, getReportHealth, subscribeOpenReports } from '../../firebase/reports';
+import { areaOf, goOffDuty, goOnDuty, updateVolunteerLocation } from '../../firebase/volunteers';
+import { subscribePasserbyReports } from '../../firebase/passerby';
 import AlertCard from './AlertCard';
 import CloseCaseScreen from './CloseCaseScreen';
-import DutyScreen from './DutyScreen';
+import DutyScreen, { type Notice } from './DutyScreen';
 import HealthScreen from './HealthScreen';
 import ProximityScreen from './ProximityScreen';
-import { CLOSED_UI, TYPE_UI, clock } from './labels';
+import { CLOSED_UI, TYPE_UI, clock, since } from './labels';
 import { useBraceletSignal } from '../../ble/scanner';
 
 type Tab = 'duty' | 'case' | 'history';
 type Step = 'proximity' | 'health' | 'close';
 // What stays on the phone after closing: no photo, no description, no health data
-type Closed = { id: string; name: string; type: Report['type']; closedAs: ClosedAs; at: number };
+type Closed = { id: string; name: string; type: Report['type']; closedAs: ClosedAs | null; at: number };
 
-const FIRST_REPORT_AFTER_MS = 5000; // demo: first lost-child report arrives 5 s after going on duty
+const vibrateFor = (r: Report) => Vibration.vibrate(r.type === 'lost' ? [0, 400, 200, 400] : [0, 800, 300, 800, 300, 800]);
 
 export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => void }) {
   const [tab, setTab] = useState<Tab>('duty');
   const [onDuty, setOnDuty] = useState(false);
-  const [incoming, setIncoming] = useState<Report | null>(null);
-  const [active, setActive] = useState<Report | null>(null);
+  const [dutyBusy, setDutyBusy] = useState(false); // turning duty on or off
+  const [open, setOpen] = useState<Report[]>([]); // live: open and searching reports, without health
+  const [shownId, setShownId] = useState<string | null>(null); // report shown in the alert card
+  const [active, setActive] = useState<Report | null>(null); // the case this volunteer took
+  const [healthLoading, setHealthLoading] = useState(false);
   const [step, setStep] = useState<Step>('proximity');
   const [closed, setClosed] = useState<Closed[]>([]);
-  const [justClosed, setJustClosed] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [passerby, setPasserby] = useState<PasserbyReport[]>([]);
+  const [area, setArea] = useState('');
+  const [locationDenied, setLocationDenied] = useState(false);
   const [now, setNow] = useState(Date.now());
-  const autoSent = useRef(false);
+  const skipped = useRef(new Set<string>()); // reports this volunteer left for others: not shown again by itself
+  const accepting = useRef<string | null>(null);
+
+  const uid = auth.currentUser?.uid ?? null;
 
   // Real signal of the reported bracelet while a case is open, so it keeps going when switching screens
   const bracelet = useBraceletSignal(active?.braceletId ?? null);
@@ -40,62 +57,172 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
     return () => clearInterval(t);
   }, []);
 
-  // Latest values for the demo timer below
-  const live = useRef({ onDuty, busy: !!active || !!incoming });
-  live.current = { onDuty, busy: !!active || !!incoming };
+  // Leaving the app (logout): go off duty, so the location is not kept
+  useEffect(() => () => void goOffDuty().catch(() => {}), []);
 
-  const receive = (r: Report) => {
-    if (!live.current.onDuty || active) return;
-    setIncoming({ ...r, createdAt: Date.now(), status: 'open' });
-    setTab('duty');
-    setJustClosed(null);
-    Vibration.vibrate(r.type === 'lost' ? [0, 400, 200, 400] : [0, 800, 300, 800, 300, 800]);
-  };
-
-  // Demo: one lost-child report shortly after the first time going on duty
+  // Open reports, live, while on duty
   useEffect(() => {
-    if (!onDuty || autoSent.current) return;
-    const t = setTimeout(() => {
-      autoSent.current = true;
-      if (live.current.onDuty && !live.current.busy) receive(MOCK_REPORTS[0]);
-    }, FIRST_REPORT_AFTER_MS);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!onDuty) return;
+    return subscribeOpenReports(setOpen);
   }, [onDuty]);
 
-  const toggleDuty = () => {
-    if (active) return;
-    setOnDuty((v) => !v);
-    setIncoming(null);
+  // Location while on duty: shown as the zone here, written to volunteers/{uid} for the dashboard
+  useEffect(() => {
+    if (!onDuty) return;
+    let watch: Location.LocationSubscription | null = null;
+    let stopped = false;
+    (async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (stopped) return;
+      setLocationDenied(status !== 'granted');
+      if (status !== 'granted') return;
+      watch = await Location.watchPositionAsync({ accuracy: Location.Accuracy.Balanced, distanceInterval: 10 }, (pos) => {
+        const p = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+        setArea(areaOf(p));
+        updateVolunteerLocation(p).catch(() => {});
+      });
+      if (stopped) watch.remove();
+    })();
+    return () => {
+      stopped = true;
+      watch?.remove();
+    };
+  }, [onDuty]);
+
+  // A new open report: show it, unless busy or already left for others
+  useEffect(() => {
+    if (!onDuty || active || shownId) return;
+    const next = open.find((r) => r.status === 'open' && !skipped.current.has(r.id));
+    if (!next) return;
+    setShownId(next.id);
+    setTab('duty');
+    setNotice(null);
+    vibrateFor(next);
+  }, [open, onDuty, active, shownId]);
+
+  // The shown report was taken by another volunteer or closed before this one answered
+  useEffect(() => {
+    if (!shownId || accepting.current === shownId) return;
+    const r = open.find((x) => x.id === shownId);
+    if (r?.status !== 'open') dropShown(shownId, r ? `تولّى متطوع آخر بلاغ ${r.member.name}` : null);
+  }, [open, shownId]);
+
+  // The case this volunteer took was closed by the family or security, or given to someone else
+  useEffect(() => {
+    if (!active || !onDuty) return;
+    const r = open.find((x) => x.id === active.id);
+    if (r?.status === 'open') return; // the accept has not reached this list yet
+    if (r && r.assignedVolunteerId === uid) return;
+    endCase(
+      null,
+      r
+        ? `حوّل فريق الأمن بلاغ ${active.member.name} لمتطوع آخر. حُذفت بياناته من جوالك`
+        : `أُغلق بلاغ ${active.member.name} من العائلة أو فريق الأمن. حُذفت بياناته من جوالك`,
+      'warn',
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Passer-by reports for the bracelet of the open case
+  useEffect(() => {
+    if (!active) return;
+    return subscribePasserbyReports(active.braceletId, active.createdAt, setPasserby, () => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.id]);
+  const seenPasserby = useRef(0);
+  useEffect(() => {
+    if (passerby.length > seenPasserby.current) Vibration.vibrate([0, 300, 150, 300]);
+    seenPasserby.current = passerby.length;
+  }, [passerby.length]);
+
+  const incoming = open.find((r) => r.id === shownId) ?? null;
+  const waiting = open.filter((r) => r.status === 'open');
+  const latestPasserby = (active && passerby.find((p) => p.braceletId === active.braceletId.toUpperCase())) || null;
+
+  const toggleDuty = async () => {
+    if (active || dutyBusy) return;
+    setDutyBusy(true);
+    try {
+      if (onDuty) {
+        setOnDuty(false);
+        setOpen([]);
+        setShownId(null);
+        skipped.current.clear();
+        Vibration.cancel();
+        await goOffDuty();
+      } else {
+        await goOnDuty(); // sets the volunteer role first, so the open reports list is allowed
+        setOnDuty(true);
+      }
+    } catch {
+      setNotice({ text: 'تعذّر الاتصال، تحقق من الإنترنت وحاول مرة ثانية', tone: 'danger' });
+    } finally {
+      setDutyBusy(false);
+    }
   };
 
-  const accept = () => {
-    if (!incoming) return;
-    setActive({ ...incoming, status: 'searching', assignedVolunteerId: ME.id });
-    setIncoming(null);
-    setStep(incoming.type === 'lost' ? 'proximity' : 'health');
-    setTab('case');
+  const accept = async () => {
+    if (!incoming || !uid || accepting.current) return;
+    const r = incoming;
+    accepting.current = r.id;
+    try {
+      // Transaction: if two volunteers tap at once, only one gets the case
+      if (!(await acceptReport(r.id, uid))) {
+        dropShown(r.id, `تولّى متطوع آخر بلاغ ${r.member.name}`);
+        return;
+      }
+      setShownId(null);
+      Vibration.cancel();
+      setActive({ ...r, status: 'searching', assignedVolunteerId: uid, health: null });
+      setStep(r.type === 'lost' ? 'proximity' : 'health');
+      setTab('case');
+      // Health is readable only now that this volunteer is assigned
+      setHealthLoading(true);
+      getReportHealth(r.id)
+        .then((health) => setActive((a) => (a && a.id === r.id ? { ...a, health } : a)))
+        .catch(() => {})
+        .finally(() => setHealthLoading(false));
+    } catch {
+      setNotice({ text: 'تعذّر قبول البلاغ، تحقق من الإنترنت وحاول مرة ثانية', tone: 'danger' });
+    } finally {
+      accepting.current = null;
+    }
+  };
+
+  // Leaves the shown report for others: it stays in the open list but does not pop up again
+  function dropShown(id: string | null, text: string | null) {
+    if (id) skipped.current.add(id);
+    setShownId(null);
     Vibration.cancel();
-  };
+    if (text) setNotice({ text, tone: 'warn' });
+  }
+  const skip = () => dropShown(shownId, null);
 
-  const decline = () => {
-    setIncoming(null);
-    Vibration.cancel();
-  };
-
-  // Phase 2: call the backend close function, which also deletes access and medical data
-  const closeCase = (as: ClosedAs) => {
+  // Drops the case and everything it carried (photo, description, health) from this phone
+  function endCase(as: ClosedAs | null, text: string, tone: Notice['tone']) {
     if (!active) return;
     setClosed((old) => [{ id: active.id, name: active.member.name, type: active.type, closedAs: as, at: Date.now() }, ...old]);
-    setJustClosed(active.member.name);
     setActive(null);
+    setPasserby([]);
+    setHealthLoading(false);
     setStep('proximity');
     setTab('duty');
+    setNotice({ text, tone });
+  }
+
+  // The local copy goes at once; the close is sent to the backend (it deletes health and photo there).
+  // If the family or security closed it first, the rules refuse the write, which is fine.
+  const closeCase = (as: ClosedAs) => {
+    if (!active) return;
+    const { id, member } = active;
+    endCase(as, `أُغلق بلاغ ${member.name}. حُذفت صلاحية السوار وبياناته الصحية من جوالك`, 'safe');
+    closeReport(id, as).catch((e: { code?: string }) => {
+      if (e?.code !== 'permission-denied' && e?.code !== 'not-found')
+        setNotice({ text: `لم يصل إغلاق بلاغ ${member.name} للنظام، أبلغ فريق الأمن`, tone: 'danger' });
+    });
   };
 
-  const dutyCount = volunteers.filter((v) => v.id !== ME.id && v.onDuty).length + (onDuty ? 1 : 0);
   const title = tab === 'duty' ? 'المناوبة' : tab === 'case' ? 'البلاغ' : 'سجلي';
-  const t = now;
 
   return (
     <View style={s.screen}>
@@ -115,7 +242,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
         <View style={s.pills}>
           <View style={s.pill}>
             <View style={[ui.dot, { backgroundColor: onDuty ? '#7FD69B' : C.faint }]} />
-            <Text style={s.pillText}>{onDuty ? 'في المناوبة' : 'خارج المناوبة'}</Text>
+            <Text style={s.pillText}>{dutyBusy ? 'لحظة…' : onDuty ? 'في المناوبة' : 'خارج المناوبة'}</Text>
           </View>
           {active && (
             <View style={[s.pill, { backgroundColor: 'rgba(212,132,26,0.25)' }]}>
@@ -129,7 +256,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
       <ScrollView contentContainerStyle={s.body}>
         {tab === 'duty' && (
           <>
-            {incoming && <AlertCard report={incoming} now={t} onAccept={accept} onDecline={decline} />}
+            {incoming && <AlertCard report={incoming} now={now} onAccept={accept} onDecline={skip} />}
             {active && (
               <Pressable style={[ui.strip, { backgroundColor: C.warnBg }]} onPress={() => setTab('case')}>
                 <Ionicons name="arrow-back" size={15} color={C.warn} />
@@ -139,16 +266,37 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
             <DutyScreen
               onDuty={onDuty}
               onToggle={toggleDuty}
-              area={ME.area}
-              busy={!!active}
-              dutyCount={dutyCount}
+              area={area}
+              locationDenied={locationDenied}
+              busy={!!active || dutyBusy}
               closedCount={closed.length}
-              justClosed={justClosed}
-              onDismissClosed={() => setJustClosed(null)}
-              demoReports={MOCK_REPORTS}
-              onSimulate={receive}
+              notice={notice}
+              onDismissNotice={() => setNotice(null)}
+              waiting={waiting.filter((r) => r.id !== shownId)}
+              now={now}
+              onShow={(r) => {
+                setShownId(r.id);
+                setNotice(null);
+              }}
             />
           </>
+        )}
+
+        {tab === 'case' && active && latestPasserby && (
+          <Pressable
+            style={[ui.strip, { backgroundColor: C.safeBg }]}
+            disabled={!latestPasserby.location}
+            onPress={() =>
+              latestPasserby.location &&
+              Linking.openURL(`https://maps.apple.com/?ll=${latestPasserby.location.latitude},${latestPasserby.location.longitude}`)
+            }
+          >
+            <Ionicons name="hand-left-outline" size={16} color={C.safe} />
+            <Text style={[ui.stripText, { color: C.safe }]}>
+              مارّ أبلغ عن سوار {active.member.name} {since(latestPasserby.at, now)}
+              {latestPasserby.location ? '، اضغط لفتح موقعه' : ''}
+            </Text>
+          </Pressable>
         )}
 
         {tab === 'case' &&
@@ -156,7 +304,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
             <View style={s.empty}>
               <Ionicons name="checkmark-done-circle-outline" size={52} color={C.mint} />
               <Text style={s.emptyTitle}>لا يوجد بلاغ مفتوح</Text>
-              <Text style={s.emptyText}>{onDuty ? 'بيوصلك تنبيه أول ما يُبلَّغ عن حالة قريبة منك' : 'شغّل المناوبة عشان تستقبل البلاغات'}</Text>
+              <Text style={s.emptyText}>{onDuty ? 'بيوصلك تنبيه أول ما يُبلَّغ عن حالة' : 'شغّل المناوبة عشان تستقبل البلاغات'}</Text>
             </View>
           ) : step === 'proximity' ? (
             <ProximityScreen
@@ -169,7 +317,8 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
           ) : step === 'health' ? (
             <HealthScreen
               report={active}
-              now={t}
+              now={now}
+              loading={healthLoading}
               onGoTo={() => setStep('proximity')}
               goToLabel={active.type === 'lost' ? 'رجوع للبحث' : 'اتجه إليه'}
             />
@@ -181,18 +330,21 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
           <>
             <Text style={ui.sectionTitle}>البلاغات المغلقة</Text>
             {closed.length === 0 && <Text style={s.none}>لم تغلق أي بلاغ بعد</Text>}
-            {closed.map((c, i) => (
-              <View key={`${c.id}-${i}`} style={s.logRow}>
-                <Ionicons name={CLOSED_UI[c.closedAs].icon} size={20} color={CLOSED_UI[c.closedAs].color} />
-                <View style={{ flex: 1 }}>
-                  <Text style={s.logName}>
-                    {c.name} · {TYPE_UI[c.type].label}
-                  </Text>
-                  <Text style={s.logSub}>{CLOSED_UI[c.closedAs].label}</Text>
+            {closed.map((c, i) => {
+              const u = c.closedAs ? CLOSED_UI[c.closedAs] : { icon: 'close-circle' as const, color: C.faint, label: 'أغلقته العائلة أو الأمن' };
+              return (
+                <View key={`${c.id}-${i}`} style={s.logRow}>
+                  <Ionicons name={u.icon} size={20} color={u.color} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.logName}>
+                      {c.name} · {TYPE_UI[c.type].label}
+                    </Text>
+                    <Text style={s.logSub}>{u.label}</Text>
+                  </View>
+                  <Text style={s.logTime}>{clock(c.at)}</Text>
                 </View>
-                <Text style={s.logTime}>{clock(c.at)}</Text>
-              </View>
-            ))}
+              );
+            })}
             {closed.length > 0 && <Text style={s.note}>يبقى في السجل الاسم الأول ونتيجة البلاغ فقط</Text>}
           </>
         )}

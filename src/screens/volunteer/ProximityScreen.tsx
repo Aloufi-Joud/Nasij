@@ -1,6 +1,6 @@
 // Proximity: big "approaching / moving away" indicator and signal bars.
-// Phase 1 runs on useFakeSignal; Phase 2 passes real readings from src/ble with the same shape.
-import { useEffect, useRef } from 'react';
+// Readings and direction come from src/ble (useBraceletSignal in VolunteerApp).
+import { useEffect, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
@@ -8,14 +8,14 @@ import { C, F, ui } from '../../theme';
 import type { Report } from '../../mock';
 import ReportPhoto from './ReportPhoto';
 import { TYPE_UI, whoLine } from './labels';
-import { bars, estimateMetres, zoneOf, type Signal, type Trend } from './useFakeSignal';
+import type { Signal, Trend } from '../../ble/signal';
+import { bars, estimateMetres, zoneOf } from './signalView';
 
 type Icon = ComponentProps<typeof Ionicons>['name'];
 type Props = {
   report: Report;
   signal: Signal | null; // null = not heard yet
   now: number;
-  onRestart?: () => void; // demo only
   onHealth: () => void;
   onClose: () => void;
 };
@@ -26,7 +26,7 @@ const TREND_VIEW: Record<Trend, { label: string; hint: string; color: string; bg
   steady: { label: 'المسافة ثابتة', hint: 'جرّب تمشي باتجاه مختلف', color: C.accent, bg: C.techBg, icon: 'remove' },
 };
 
-export default function ProximityScreen({ report: r, signal, now, onRestart, onHealth, onClose }: Props) {
+export default function ProximityScreen({ report: r, signal, now, onHealth, onClose }: Props) {
   const zone = zoneOf(signal, now);
   const lost = zone === 'LOST';
   const heard = !!signal && !lost;
@@ -45,7 +45,7 @@ export default function ProximityScreen({ report: r, signal, now, onRestart, onH
   const lostChild = r.type === 'lost';
 
   // Pulse while searching; faster when close
-  const pulse = useRef(new Animated.Value(0)).current;
+  const [pulse] = useState(() => new Animated.Value(0));
   const period = strength >= 3 ? 700 : strength >= 1 ? 1100 : 1600;
   useEffect(() => {
     const loop = Animated.loop(
@@ -141,19 +141,15 @@ export default function ProximityScreen({ report: r, signal, now, onRestart, onH
         )}
       </View>
 
-      {/* Demo values: removed in Phase 2 */}
-      <View style={s.tech}>
-        <Text style={s.techText}>
-          قيم وهمية للتجربة
-          {/* ⁦ ⁩ keep "-92" from flipping to "92-" inside Arabic text */}
-          {signal ? ` · الإشارة الآن ⁦${signal.rssi}⁩ · المتوسط ⁦${signal.smooth}⁩` : ''}
-        </Text>
-        {onRestart && (
-          <Pressable onPress={onRestart} hitSlop={8}>
-            <Text style={s.restart}>إعادة المحاكاة</Text>
-          </Pressable>
-        )}
-      </View>
+      {/* Raw reading, for checking against the laptop scanner */}
+      {signal && (
+        <View style={s.tech}>
+          <Text style={s.techText}>
+            {/* ⁦ ⁩ keep "-92" from flipping to "92-" inside Arabic text */}
+            {`قراءة السوار · الإشارة الآن ⁦${signal.rssi}⁩ · المتوسط ⁦${signal.smooth}⁩`}
+          </Text>
+        </View>
+      )}
     </>
   );
 }
@@ -186,5 +182,4 @@ const s = StyleSheet.create({
   actions: { gap: 10, marginTop: 22 },
   tech: { marginTop: 18, padding: 12, borderRadius: 14, backgroundColor: C.techBg },
   techText: { color: C.primary, fontSize: 12, textAlign: 'right' },
-  restart: { color: C.accent, fontSize: 12.5, fontWeight: '700', textAlign: 'right', marginTop: 6 },
 });

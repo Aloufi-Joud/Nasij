@@ -23,11 +23,12 @@ const STEPS: Record<ReportType, string[]> = {
 type Props = {
   report: Report;
   now: number;
+  loading?: boolean; // health is fetched after accepting
   onGoTo: () => void; // open the proximity screen
   goToLabel: string;
 };
 
-export default function HealthScreen({ report: r, now, onGoTo, goToLabel }: Props) {
+export default function HealthScreen({ report: r, now, loading, onGoTo, goToLabel }: Props) {
   const t = TYPE_UI[r.type];
   const urgent = r.type !== 'lost';
 
@@ -65,7 +66,7 @@ export default function HealthScreen({ report: r, now, onGoTo, goToLabel }: Prop
         </View>
       ) : (
         <View style={ui.card}>
-          <Text style={ui.muted}>لم تضف العائلة حالة صحية</Text>
+          <Text style={ui.muted}>{loading ? 'جارٍ تحميل الحالة الصحية…' : 'لم تضف العائلة حالة صحية'}</Text>
         </View>
       )}
 

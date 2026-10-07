@@ -3,32 +3,39 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { C, F, ui } from '../../theme';
 import type { Report, ReportType } from '../../mock';
-import { TYPE_UI } from './labels';
+import { TYPE_UI, since } from './labels';
+
+export type Notice = { text: string; tone: 'safe' | 'warn' | 'danger' };
 
 type Props = {
   onDuty: boolean;
   onToggle: () => void;
-  area: string;
+  area: string; // '' = outside the event or location unknown
+  locationDenied: boolean;
   busy: boolean; // a case is open, so the toggle is locked
-  dutyCount: number; // volunteers on duty now
   closedCount: number; // cases this volunteer closed in this session
-  justClosed: string | null; // name from the case just closed, for the confirmation strip
-  onDismissClosed: () => void;
-  demoReports: Report[];
-  onSimulate: (report: Report) => void;
+  notice: Notice | null; // case closed, taken by someone else, or an error
+  onDismissNotice: () => void;
+  waiting: Report[]; // open reports nobody has taken yet
+  now: number;
+  onShow: (report: Report) => void;
 };
 
+const TONE = {
+  safe: { color: C.safe, bg: C.safeBg, icon: 'checkmark-circle' },
+  warn: { color: C.warn, bg: C.warnBg, icon: 'information-circle' },
+  danger: { color: C.danger, bg: C.dangerBg, icon: 'alert-circle' },
+} as const;
+
 export default function DutyScreen(p: Props) {
-  const canSimulate = p.onDuty && !p.busy;
+  const tone = p.notice ? TONE[p.notice.tone] : null;
 
   return (
     <>
-      {p.justClosed && (
-        <Pressable style={[ui.strip, { backgroundColor: C.safeBg }]} onPress={p.onDismissClosed}>
-          <Ionicons name="checkmark-circle" size={16} color={C.safe} />
-          <Text style={[ui.stripText, { color: C.safe }]}>
-            أُغلق بلاغ {p.justClosed}. حُذفت صلاحية السوار وبياناته الصحية من جوالك
-          </Text>
+      {p.notice && tone && (
+        <Pressable style={[ui.strip, { backgroundColor: tone.bg }]} onPress={p.onDismissNotice}>
+          <Ionicons name={tone.icon} size={16} color={tone.color} />
+          <Text style={[ui.stripText, { color: tone.color }]}>{p.notice.text}</Text>
         </Pressable>
       )}
 
@@ -41,7 +48,7 @@ export default function DutyScreen(p: Props) {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={s.dutyTitle}>{p.onDuty ? 'أنت في المناوبة' : 'أنت خارج المناوبة'}</Text>
-            <Text style={ui.muted}>{p.onDuty ? 'تصلك البلاغات القريبة منك' : 'لن تصلك أي بلاغات'}</Text>
+            <Text style={ui.muted}>{p.onDuty ? 'تصلك البلاغات المفتوحة في الفعالية' : 'لن تصلك أي بلاغات'}</Text>
           </View>
           <Pressable
             onPress={p.onToggle}
@@ -59,7 +66,9 @@ export default function DutyScreen(p: Props) {
           <View style={s.details}>
             <View style={s.detail}>
               <Ionicons name="location-outline" size={15} color={C.accent} />
-              <Text style={s.detailText}>منطقتك: {p.area}</Text>
+              <Text style={s.detailText}>
+                {p.locationDenied ? 'الموقع غير مفعّل، لن يظهر مكانك لفريق الأمن' : `منطقتك: ${p.area || 'خارج مناطق الفعالية'}`}
+              </Text>
             </View>
             <View style={s.detail}>
               <Ionicons name="lock-closed-outline" size={15} color={C.accent} />
@@ -72,8 +81,8 @@ export default function DutyScreen(p: Props) {
 
       <View style={s.stats}>
         <View style={s.stat}>
-          <Text style={s.statNum}>{p.dutyCount}</Text>
-          <Text style={s.statLabel}>متطوعين في المناوبة</Text>
+          <Text style={s.statNum}>{p.onDuty ? p.waiting.length : '—'}</Text>
+          <Text style={s.statLabel}>بلاغات تنتظر متطوعًا</Text>
         </View>
         <View style={s.stat}>
           <Text style={s.statNum}>{p.closedCount}</Text>
@@ -81,25 +90,30 @@ export default function DutyScreen(p: Props) {
         </View>
       </View>
 
-      {/* Demo: in Phase 2 reports arrive from Firebase instead */}
-      <Text style={ui.caption}>تجربة البلاغات (بيانات وهمية)</Text>
-      <View style={s.demo}>
-        {p.demoReports.map((r) => (
-          <DemoButton key={r.id} type={r.type} name={r.member.name} disabled={!canSimulate} onPress={() => p.onSimulate(r)} />
-        ))}
-      </View>
-      {!p.onDuty && <Text style={s.demoHint}>شغّل المناوبة عشان تجرّب البلاغات</Text>}
+      {/* Open reports nobody took yet, including ones this volunteer skipped */}
+      {p.onDuty && p.waiting.length > 0 && (
+        <>
+          <Text style={ui.caption}>بلاغات مفتوحة</Text>
+          <View style={s.demo}>
+            {p.waiting.map((r) => (
+              <ReportRow key={r.id} type={r.type} name={r.member.name} when={since(r.createdAt, p.now)} disabled={p.busy} onPress={() => p.onShow(r)} />
+            ))}
+          </View>
+        </>
+      )}
     </>
   );
 }
 
-function DemoButton(p: { type: ReportType; name: string; disabled: boolean; onPress: () => void }) {
+function ReportRow(p: { type: ReportType; name: string; when: string; disabled: boolean; onPress: () => void }) {
   const t = TYPE_UI[p.type];
   return (
     <Pressable style={[s.demoBtn, p.disabled && { opacity: 0.4 }]} disabled={p.disabled} onPress={p.onPress}>
       <Ionicons name={t.icon} size={18} color={t.color} />
       <Text style={s.demoText}>{t.label}</Text>
-      <Text style={s.demoName}>{p.name}</Text>
+      <Text style={s.demoName}>
+        {p.name} · {p.when}
+      </Text>
     </Pressable>
   );
 }
@@ -126,9 +140,8 @@ const s = StyleSheet.create({
   demo: { gap: 8 },
   demoBtn: {
     flexDirection: 'row-reverse', alignItems: 'center', gap: 10,
-    backgroundColor: C.card, borderWidth: 1.5, borderColor: C.border, borderStyle: 'dashed', borderRadius: 14, padding: 13,
+    backgroundColor: C.card, borderWidth: 1.5, borderColor: C.border, borderRadius: 14, padding: 13,
   },
   demoText: { color: C.text, fontSize: 14, fontWeight: '600', textAlign: 'right' },
   demoName: { color: C.faint, fontSize: 13, flex: 1, textAlign: 'left' },
-  demoHint: { color: C.faint, fontSize: 12, textAlign: 'center', marginTop: 10 },
 });

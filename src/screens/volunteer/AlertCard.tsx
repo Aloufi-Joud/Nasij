@@ -12,7 +12,7 @@ export default function AlertCard({ report: r, now, onAccept, onDecline }: Props
   const t = TYPE_UI[r.type];
   const lost = r.type === 'lost';
   const urgentText =
-    r.type === 'emergency' ? `${r.member.name} ضغط زر الطوارئ في السوار مرتين` : `سوار ${r.member.name} توقف عن الحركة دقيقة كاملة`;
+    r.type === 'emergency' ? `${r.member.name} ضغط زر الطوارئ في السوار مرتين` : `سوار ${r.member.name} توقف عن الحركة ٣ دقائق`;
 
   return (
     <View style={[s.card, { borderColor: lost ? C.warnBorder : C.dangerBorder }]}>
