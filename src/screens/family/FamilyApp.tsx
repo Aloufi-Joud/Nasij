@@ -140,10 +140,12 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   // Latest alarm info per bracelet slot: 0x21 = double press, 0x23 = no movement (possible fall)
   const alarm = useRef<Record<number, { triggered: boolean; count: number }>>({});
   const lastCount = useRef<Record<number, number>>({});
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
   const [me, setMe] = useState<Point | null>(null);
   const [eventCenter, setEventCenter] = useState<Point | null>(null);
-  const lastRadius = useRef(10);
+  // While lost, keep showing the last known circle
+  const [radius, setRadius] = useState(10);
+  const [nearbyList, setNearbyList] = useState<[string, { rssi: number; seen: number }][]>([]);
   const pairing = useRef<Pairing | null>(null);
   const autoReport = useRef<(type: 'emergency' | 'fall') => void>(() => {});
   const [pairView, setPairView] = useState<PairView | null>(null);
@@ -176,6 +178,21 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   const addLog = (kind: LogKind) =>
     setLog((old) => [{ time: new Date().toLocaleTimeString(), zone: kind }, ...old].slice(0, 20));
 
+  const link = (m: string) => {
+    linkedMac = m;
+    knownIds.clear();
+    history.current = [];
+    latest.current = null;
+    alarm.current = {};
+    lastCount.current = {};
+    wasTriggered.current = {};
+    zoneRef.current = null;
+    setZone(null);
+    setReading(null);
+    setMac(m);
+    setTypedMac('');
+  };
+
   useEffect(() => {
     const stopState = onBluetoothState(setBt);
     const stopScan = listen((device) => {
@@ -203,6 +220,13 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
       const t = Date.now();
       setNow(t);
       setReading(r);
+      // Bracelets heard in the last 5 s, strongest (closest) first
+      setNearbyList(
+        Object.entries(nearby.current)
+          .filter(([, v]) => t - v.seen < 5000)
+          .sort((a, b) => b[1].rssi - a[1].rssi)
+          .slice(0, 4),
+      );
 
       const p = pairing.current;
       if (p?.pressed) {
@@ -255,6 +279,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
           ? raw
           : zoneRef.current;
 
+      if (confirmed !== 'LOST') setRadius(estimateMetres(r.smooth));
       if (confirmed !== zoneRef.current) {
         zoneRef.current = confirmed;
         setZone(confirmed);
@@ -273,9 +298,6 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   const lost = zone === 'LOST';
   const zoneUi = zone ? ZONE_UI[zone] : null;
   const strength = reading && !lost ? bars(reading.smooth) : 0;
-  // While lost, keep showing the last known circle
-  if (reading && !lost) lastRadius.current = estimateMetres(reading.smooth);
-  const radius = lastRadius.current;
   const ago = reading ? Math.round((now - reading.lastSeen) / 1000) : 0;
   const btOff = !!bt && bt !== State.PoweredOn;
   // Where the bracelet can be: within `radius` of the family. Warn when that circle reaches the event edge.
@@ -316,11 +338,13 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   };
 
   // Log and vibrate once each time the bracelet reaches the event edge
+  const [wasNearEdge, setWasNearEdge] = useState(false);
+  if (nearEdge !== wasNearEdge) {
+    setWasNearEdge(nearEdge);
+    if (nearEdge) addLog('EDGE');
+  }
   useEffect(() => {
-    if (!nearEdge) return;
-    addLog('EDGE');
-    Vibration.vibrate([0, 500, 200, 500]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (nearEdge) Vibration.vibrate([0, 500, 200, 500]);
   }, [nearEdge]);
 
   // Follow the open report live: a volunteer takes it, or closes it as found
@@ -334,7 +358,6 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
       setJustFound(true);
       addLog('FOUND');
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reportId]);
 
   // Volunteers near the bracelet pick it up from Firestore
@@ -362,29 +385,16 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   };
   // Called from the scan timer, so it reads this render's member and report through a ref.
   // One open report at a time: a second press while a case is open adds nothing.
-  autoReport.current = (type) => {
-    if (!report) sendReport(type, type === 'fall' ? 'سقوط محتمل: السوار توقف عن الحركة' : 'ضغط زر الطوارئ في السوار', null);
-  };
+  useEffect(() => {
+    autoReport.current = (type) => {
+      if (!report) sendReport(type, type === 'fall' ? 'سقوط محتمل: السوار توقف عن الحركة' : 'ضغط زر الطوارئ في السوار', null);
+    };
+  });
 
   // Closing also deletes the photo and health data; the live report then shows "found"
   const confirmFound = () => {
     if (!report) return;
     closeReport(report.id, 'found').catch(() => failed('تعذر إغلاق البلاغ'));
-  };
-
-  const link = (m: string) => {
-    linkedMac = m;
-    knownIds.clear();
-    history.current = [];
-    latest.current = null;
-    alarm.current = {};
-    lastCount.current = {};
-    wasTriggered.current = {};
-    zoneRef.current = null;
-    setZone(null);
-    setReading(null);
-    setMac(m);
-    setTypedMac('');
   };
   const unlink = () => {
     const release = linkedMac ? releaseBracelet(linkedMac) : Promise.resolve();
@@ -442,12 +452,6 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         },
       },
     ]);
-
-  // Bracelets heard in the last 5 s, strongest (closest) first
-  const nearbyList = Object.entries(nearby.current)
-    .filter(([, v]) => now - v.seen < 5000)
-    .sort((a, b) => b[1].rssi - a[1].rssi)
-    .slice(0, 4);
 
   const dismissSos = () => {
     sosRef.current = false;

@@ -52,11 +52,11 @@ export function onBluetoothState(cb: (state: State) => void) {
 // Live signal of one bracelet by its number (MAC), refreshed twice a second.
 // null mac = not listening. Same shape as the volunteer's fake signal.
 export function useBraceletSignal(mac: string | null) {
-  const [signal, setSignal] = useState<Signal | null>(null);
-  const [now, setNow] = useState(Date.now());
+  // Tagged with its bracelet, so a new mac shows nothing until its own first reading
+  const [state, setState] = useState<{ mac: string; signal: Signal | null } | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    setSignal(null);
     if (!mac) return;
     // iPhone hides the MAC: learn the phone-side id from EA00, then match the other packets by id
     const ids = new Set<string>();
@@ -73,7 +73,7 @@ export function useBraceletSignal(mac: string | null) {
     });
     const timer = setInterval(() => {
       setNow(Date.now());
-      setSignal(latest);
+      setState({ mac, signal: latest });
     }, 500);
 
     return () => {
@@ -81,6 +81,7 @@ export function useBraceletSignal(mac: string | null) {
       clearInterval(timer);
     };
   }, [mac]);
+  const signal = state && state.mac === mac ? state.signal : null;
 
   return { signal, now };
 }
