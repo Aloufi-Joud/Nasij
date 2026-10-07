@@ -1,7 +1,10 @@
-// Fake live feed for the demo: volunteers walk around the site, pick up bracelet signals
-// and enter zones. ponytail: delete this file once Firestore subscriptions drive the dashboard.
+// Live data for the security dashboard, straight from Firestore, plus the site geometry.
+// Security is allowed to see everything, health included.
 import { useEffect, useState } from 'react';
-import { zones, type Point, type Report, type Volunteer, type Zone } from '../../../src/mock';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { db } from '../../../src/firebase';
+import { subscribeOpenReports } from '../../../src/firebase/reports';
+import { zones, type Member, type PasserbyReport, type Point, type Report, type Sighting, type Volunteer, type Zone } from '../../../src/mock';
 import { metresBetween } from '../../../src/components/geo';
 
 // Drawn Expo 2030 site, shared with MapView (approximation of the published masterplan, not survey data)
@@ -34,76 +37,50 @@ export function zoneOf(p: Point | null): Zone | undefined {
   return zones.filter((z) => !isHub(z)).reduce((a, b) => (gap(b) < gap(a) ? b : a));
 }
 
-export type LiveEvent = { id: number; at: number; text: string; kind: 'report' | 'signal' | 'move'; reportId?: string };
+export type LiveEvent = { id: string; at: number; text: string; kind: 'report' | 'signal' | 'passerby'; reportId?: string };
 
-const TICK = 700; // ms
-const STEP = 6; // metres per tick, a brisk walk sped up for the demo
-const HEARD = 60; // metres: a phone hears the bracelet (10 to 30 m in a crowd, stretched for the demo)
-const randomSpot = () => offset(SITE.center, Math.sqrt(Math.random()) * SITE.radius * 0.9, Math.random() * 360);
-const EXTRA = ['متطوع ٤', 'متطوع ٥', 'متطوع ٦', 'متطوع ٧', 'متطوع ٨', 'متطوع ٩'];
+const SINCE_MS = 12 * 60 * 60_000; // the feed and passer-by list cover today's event only
 
-export function useLive(base: Volunteer[], reports: Report[]) {
-  const [state, setState] = useState(() => {
-    const vols = [
-      ...base.filter((v) => v.onDuty),
-      ...EXTRA.map((name, i) => ({ id: `sim${i}`, name, onDuty: true, area: '', location: randomSpot() })),
-    ];
-    let id = 0;
-    const events: LiveEvent[] = reports.map((r) => ({
-      id: id++,
-      at: r.createdAt,
-      kind: 'report' as const,
-      reportId: r.id,
+function useCollection<T>(name: string, ...filters: ReturnType<typeof where>[]): T[] {
+  const [rows, setRows] = useState<T[]>([]);
+  useEffect(
+    () => onSnapshot(query(collection(db, name), ...filters), (snap) => setRows(snap.docs.map((d) => ({ ...d.data(), id: d.id }) as T))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [name],
+  );
+  return rows;
+}
+
+export function useLive() {
+  const [reports, setReports] = useState<Report[]>([]);
+  useEffect(() => subscribeOpenReports(setReports), []);
+  const since = useState(() => Date.now() - SINCE_MS)[0];
+  const volunteers = useCollection<Volunteer>('volunteers', where('onDuty', '==', true));
+  const sightings = useCollection<Sighting>('sightings', where('at', '>=', since));
+  const passerby = useCollection<PasserbyReport>('passerbyReports', where('at', '>=', since));
+  // Bracelet number → family → member, to name the child a passer-by found
+  const bracelets = useCollection<{ id: string; familyId: string }>('bracelets');
+  const members = useCollection<Member>('members');
+  const memberOf = (braceletId: string) => {
+    const familyId = bracelets.find((b) => b.id === braceletId.toUpperCase())?.familyId;
+    return members.find((m) => m.id === familyId);
+  };
+
+  const name = (id: string) => volunteers.find((v) => v.id === id)?.name ?? 'متطوع';
+  const events: LiveEvent[] = [
+    ...reports.map((r) => ({
+      id: r.id, at: r.createdAt, kind: 'report' as const, reportId: r.id,
       text: `بلاغ جديد: ${r.member.name}، ${r.type === 'lost' ? 'مفقود' : r.type === 'fall' ? 'سقوط محتمل' : 'طوارئ'}`,
-    }));
-    return { vols, events: events.sort((a, b) => b.at - a.at), at: Date.now() };
-  });
+    })),
+    ...sightings.flatMap((s) => {
+      const r = reports.find((x) => x.id === s.reportId);
+      return r ? [{ id: s.id, at: s.at, kind: 'signal' as const, reportId: r.id, text: `${name(s.volunteerId)} التقط إشارة سوار ${r.member.name}${s.area ? ` في ${s.area}` : ''}` }] : [];
+    }),
+    ...passerby.map((p) => {
+      const r = reports.find((x) => x.braceletId.toUpperCase() === p.braceletId.toUpperCase());
+      return { id: p.id, at: p.at, kind: 'passerby' as const, reportId: r?.id, text: `مارّ أبلغ عن ${memberOf(p.braceletId)?.name ?? 'سوار غير مربوط'}` };
+    }),
+  ].sort((a, b) => b.at - a.at).slice(0, 30);
 
-  useEffect(() => {
-    const targets = new Map<string, Point>();
-    const lastHeard = new Map<string, number>();
-    let id = 1000;
-    const timer = setInterval(() => {
-      setState((s) => {
-        const now = Date.now();
-        const fresh: LiveEvent[] = [];
-        const vols = s.vols.map((v) => {
-          let target = targets.get(v.id);
-          if (!target || metresBetween(v.location, target) < STEP) {
-            // half the time head for an open case, otherwise patrol
-            const r = Math.random() < 0.5 ? reports[Math.floor(Math.random() * reports.length)] : null;
-            target = r?.location ? offset(r.location, 15 + Math.random() * 30, Math.random() * 360) : randomSpot();
-            targets.set(v.id, target);
-          }
-          const d = metresBetween(v.location, target);
-          const k = Math.min(1, STEP / d);
-          const location = {
-            latitude: v.location.latitude + (target.latitude - v.location.latitude) * k,
-            longitude: v.location.longitude + (target.longitude - v.location.longitude) * k,
-          };
-
-          const before = zoneOf(v.location);
-          const after = zoneOf(location);
-          if (after && after.id !== before?.id && Math.random() < 0.5) {
-            fresh.push({ id: id++, at: now, kind: 'move', text: `${v.name} دخل ${after.name}` });
-          }
-          for (const r of reports) {
-            if (!r.location) continue;
-            const dist = metresBetween(location, r.location);
-            const key = v.id + r.id;
-            if (dist < HEARD && now - (lastHeard.get(key) ?? 0) > 15_000) {
-              lastHeard.set(key, now);
-              const where = zoneOf(location)?.name;
-              fresh.push({ id: id++, at: now, kind: 'signal', reportId: r.id, text: `${v.name} التقط إشارة سوار ${r.member.name}${where ? ` في ${where}` : ''}` });
-            }
-          }
-          return { ...v, location };
-        });
-        return { vols, events: fresh.length ? [...fresh.reverse(), ...s.events].slice(0, 30) : s.events, at: now };
-      });
-    }, TICK);
-    return () => clearInterval(timer);
-  }, [reports]);
-
-  return state;
+  return { reports, volunteers, passerby, events, memberOf };
 }

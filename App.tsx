@@ -25,7 +25,13 @@ export default function App() {
       <StatusBar style="light" />
       {opened.includes('family') && (
         <View style={{ flex: 1, display: role === 'family' ? 'flex' : 'none' }}>
-          <FamilyApp onSwitchRole={switchRole} />
+          <FamilyApp
+            onSwitchRole={switchRole}
+            onLogout={() => {
+              setRole(null);
+              setOpened([]);
+            }}
+          />
         </View>
       )}
       {opened.includes('volunteer') && (

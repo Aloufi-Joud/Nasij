@@ -7,7 +7,7 @@ import { State, type Device } from 'react-native-ble-plx';
 import MapView, { Circle } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { C, ui } from '../../theme';
-import type { Kind, Point, Report } from '../../mock';
+import type { Kind, Point, Report, ReportType } from '../../mock';
 import { metresBetween } from '../../components/geo';
 import { PAIR_RSSI, newPairing, pairStep, type Pairing } from '../../ble/pairing';
 import { listen, onBluetoothState } from '../../ble/scanner';
@@ -17,6 +17,11 @@ import { BottomNav } from '../../components/BottomNav';
 import { Button } from '../../components/Button';
 import { Header, HeaderButton, Pill } from '../../components/Header';
 import { latinDigits } from '../../components/digits';
+import { signOut } from 'firebase/auth';
+import { auth } from '../../firebase';
+import { claimBracelet, releaseBracelet } from '../../firebase/bracelets';
+import { deleteMember, loadMember, saveMember } from '../../firebase/members';
+import { closeReport, createReport, subscribeReport } from '../../firebase/reports';
 import FoundScreen from './FoundScreen';
 import LostScreen from './LostScreen';
 
@@ -114,7 +119,7 @@ const CIRCLE_FILL: Record<Zone, string> = {
 type Tab = 'home' | 'map' | 'alerts';
 type Screen = 'lost' | 'found' | null;
 
-export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }) {
+export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: () => void; onLogout: () => void }) {
   const [bt, setBt] = useState<string>('');
   const [reading, setReading] = useState<Reading | null>(null);
   const [zone, setZone] = useState<Zone | null>(null);
@@ -124,7 +129,7 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
   const [member, setMember] = useState<Member | null>(null);
   const [editing, setEditing] = useState(true);
   const [draft, setDraft] = useState<Member>(EMPTY);
-  // Open "my child is lost" report. Phase 2: lives in Firestore.
+  // Open "my child is lost" report, kept live from Firestore
   const [report, setReport] = useState<Report | null>(null);
   const [screen, setScreen] = useState<Screen>(null);
   const [justFound, setJustFound] = useState(false);
@@ -139,6 +144,7 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
   const [eventCenter, setEventCenter] = useState<Point | null>(null);
   const lastRadius = useRef(10);
   const pairing = useRef<Pairing | null>(null);
+  const autoReport = useRef<(type: 'emergency' | 'fall') => void>(() => {});
   const [pairView, setPairView] = useState<PairView | null>(null);
 
   const latest = useRef<Reading | null>(null);
@@ -199,7 +205,10 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
       if (p?.pressed) {
         pairing.current = null;
         setPairView(null);
-        link(p.mac);
+        // Server-side lock: one family per bracelet per visit
+        claimBracelet(p.mac)
+          .then((ok) => (ok ? link(p.mac) : Alert.alert('السوار مرتبط بعائلة ثانية', 'ما يمكن ربطه حتى تنهي العائلة زيارتها.')))
+          .catch(() => Alert.alert('تعذر ربط السوار', 'تأكد من الاتصال بالإنترنت وحاول مرة ثانية.'));
       } else if (p) {
         setPairView({
           mac: p.mac,
@@ -232,6 +241,8 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
           sosRef.current = true;
           setSos(kind);
         }
+        // Journey step 5: the alert also reaches the nearest volunteer
+        autoReport.current(kind === 'SOS' ? 'emergency' : 'fall');
       }
 
       const raw = getZone(t - r.lastSeen, r.smooth, zoneRef.current);
@@ -274,10 +285,31 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
     ? `${KIND_UI[member.kind].label}${member.age ? ` · ${member.age} سنة` : ''}`
     : '';
 
+  // The member saved last time on this account comes back after login
+  useEffect(() => {
+    loadMember()
+      .then((m) => {
+        if (!m) return;
+        const form = { name: m.name, kind: m.kind, age: m.age ? String(m.age) : '', condition: m.health?.condition ?? '', notes: m.health?.notes ?? '' };
+        setMember(form);
+        setDraft(form);
+        setEditing(false);
+      })
+      .catch(() => {});
+  }, []);
+
   const saveDraft = () => {
     if (!draft.name.trim()) return;
-    setMember({ ...draft, name: draft.name.trim(), condition: draft.condition.trim(), notes: draft.notes.trim() });
+    const m = { ...draft, name: draft.name.trim(), condition: draft.condition.trim(), notes: draft.notes.trim() };
+    setMember(m);
     setEditing(false);
+    saveMember({
+      name: m.name,
+      kind: m.kind,
+      age: Number(m.age) || 0,
+      health: m.condition ? { condition: m.condition, notes: m.notes } : null,
+      braceletId: mac,
+    }).catch(() => Alert.alert('تعذر حفظ البيانات', 'تأكد من الاتصال بالإنترنت وحاول مرة ثانية.'));
   };
 
   const addLog = (kind: LogKind) =>
@@ -291,12 +323,25 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nearEdge]);
 
-  // Phase 2: create the report in Firestore; volunteers near the bracelet get temporary access
-  const sendLost = (description: string, photo: string | null) => {
+  // Follow the open report live: a volunteer takes it, or closes it as found
+  const reportId = report?.id;
+  useEffect(() => {
+    if (!reportId) return;
+    return subscribeReport(reportId, (r) => {
+      if (r?.status !== 'closed') return setReport(r);
+      setReport(null);
+      setScreen(null);
+      setJustFound(true);
+      addLog('FOUND');
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportId]);
+
+  // Volunteers near the bracelet pick it up from Firestore
+  const sendReport = async (type: ReportType, description: string, photo: string | null) => {
     if (!member) return;
-    setReport({
-      id: `r${Date.now()}`,
-      type: 'lost',
+    const r = {
+      type,
       braceletId: mac ?? '',
       member: { name: member.name, kind: member.kind, age: Number(member.age) || 0 },
       photo,
@@ -304,23 +349,30 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
       health: member.condition ? { condition: member.condition, notes: member.notes } : null,
       area: 'قرب موقع العائلة',
       location: me,
-      createdAt: Date.now(),
-      status: 'open',
-      assignedVolunteerId: null,
-      closedAs: null,
-      closedAt: null,
-    });
-    setScreen(null);
-    setJustFound(false);
-    addLog('REPORT');
+    };
+    try {
+      const id = await createReport(r);
+      setReport({ ...r, id, createdAt: Date.now(), status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null });
+      setScreen(null);
+      setJustFound(false);
+      addLog('REPORT');
+    } catch {
+      Alert.alert('تعذر إرسال البلاغ', 'تأكد من الاتصال بالإنترنت وحاول مرة ثانية.');
+    }
+  };
+  const sendLost = (description: string, photo: string | null) => sendReport('lost', description, photo);
+  // Called from the scan timer, so it reads this render's member and report through a ref.
+  // One open report at a time: a second press while a case is open adds nothing.
+  autoReport.current = (type) => {
+    if (!report) sendReport(type, type === 'fall' ? 'سقوط محتمل: السوار توقف عن الحركة' : 'ضغط زر الطوارئ في السوار', null);
   };
 
-  // Phase 2: the backend close function also deletes access, photo and health data
+  // Closing also deletes the photo and health data; the live report then shows "found"
   const confirmFound = () => {
-    setReport(null);
-    setScreen(null);
-    setJustFound(true);
-    addLog('FOUND');
+    if (!report) return;
+    closeReport(report.id, 'found').catch(() =>
+      Alert.alert('تعذر إغلاق البلاغ', 'تأكد من الاتصال بالإنترنت وحاول مرة ثانية.'),
+    );
   };
 
   const link = (m: string) => {
@@ -338,6 +390,7 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
     setTypedMac('');
   };
   const unlink = () => {
+    const release = linkedMac ? releaseBracelet(linkedMac) : Promise.resolve();
     linkedMac = null;
     knownIds.clear();
     latest.current = null;
@@ -345,6 +398,7 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
     setZone(null);
     setReading(null);
     setMac(null);
+    return release;
   };
 
   // Linking starts here: the bracelet is linked only after the press check passes
@@ -358,23 +412,36 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
     setPairView(null);
   };
 
-  // Delete the member completely: details, health, bracelet link and any open report.
-  // Phase 2: also deletes the member and the bracelet link in Firestore.
+  // Delete the member completely, here and in Firestore: details, health,
+  // bracelet lock and any open report
+  // Resolves once Firestore is done, so "end of visit" signs out only after the deletes
+  const clearMember = () => {
+    const done = Promise.allSettled([unlink(), deleteMember(), report && closeReport(report.id, 'found')]);
+    cancelPair();
+    setMember(null);
+    setDraft(EMPTY);
+    setEditing(true);
+    setReport(null);
+    setScreen(null);
+    setJustFound(false);
+    return done;
+  };
   const removeMember = () =>
     Alert.alert(`حذف ${who}؟`, 'بتنحذف بياناته وحالته الصحية، وينفك ربط السوار، وينقفل أي بلاغ مفتوح.', [
       { text: 'إلغاء', style: 'cancel' },
+      { text: 'حذف', style: 'destructive', onPress: clearMember },
+    ]);
+  // Leaving the event: nothing about the family stays behind, and the bracelet is free for the next visitor
+  const endVisit = () =>
+    Alert.alert('إنهاء الزيارة؟', 'بتنحذف كل بيانات العائلة والحالة الصحية، وينفك ربط السوار، وتطلع من حسابك.', [
+      { text: 'إلغاء', style: 'cancel' },
       {
-        text: 'حذف',
+        text: 'إنهاء الزيارة',
         style: 'destructive',
-        onPress: () => {
-          unlink();
-          cancelPair();
-          setMember(null);
-          setDraft(EMPTY);
-          setEditing(true);
-          setReport(null);
-          setScreen(null);
-          setJustFound(false);
+        onPress: async () => {
+          await clearMember();
+          await signOut(auth).catch(() => {});
+          onLogout();
         },
       },
     ]);
@@ -442,6 +509,7 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
           <>
             <HeaderButton icon="notifications-outline" label="التنبيهات" badge={log.length} onPress={() => setTab('alerts')} />
             <HeaderButton icon="swap-horizontal" label="تبديل إلى متطوع" onPress={onSwitchRole} />
+            <HeaderButton icon="exit-outline" label="إنهاء الزيارة" onPress={endVisit} />
           </>
         }
       >
@@ -724,7 +792,11 @@ export default function FamilyApp({ onSwitchRole }: { onSwitchRole: () => void }
               )}
               {report && (
                 <View style={{ marginTop: 14 }}>
-                  <Banner tone="danger" icon="megaphone-outline" text="البلاغ وصل للمتطوعين القريبين، وهم يدورون الحين" />
+                  <Banner
+                    tone="danger"
+                    icon="megaphone-outline"
+                    text={report.status === 'searching' ? 'متطوع استلم البلاغ ويدور الحين' : 'البلاغ وصل للمتطوعين القريبين، ننتظر أحد يستلمه'}
+                  />
                   <Button label="لقيناه" icon="checkmark-circle-outline" onPress={() => setScreen('found')} />
                 </View>
               )}

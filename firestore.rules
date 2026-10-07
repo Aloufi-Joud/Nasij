@@ -1,0 +1,89 @@
+rules_version = '2';
+// Nasij access rules. Roles live in users/{uid}.role: family, volunteer, security.
+// Security accounts are made by staff in the Firebase console (users/{uid}.role = 'security').
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function me() { return request.auth.uid; }
+    function role() { return get(/databases/$(database)/documents/users/$(me())).data.role; }
+    function isSecurity() { return signedIn() && role() == 'security'; }
+    function isVolunteer() { return signedIn() && role() == 'volunteer'; }
+    function changes(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
+
+    // A user may pick family or volunteer for themselves, never security.
+    // ponytail: volunteer is self-chosen at login; staff-assigned volunteer role is in the "later" list
+    match /users/{uid} {
+      allow read: if signedIn() && (me() == uid || isSecurity());
+      allow write: if signedIn() && me() == uid && request.resource.data.role in ['family', 'volunteer'];
+    }
+
+    // One member per family account, health included: the family and security only
+    match /members/{familyId} {
+      allow read: if signedIn() && (me() == familyId || isSecurity());
+      allow write: if signedIn() && me() == familyId;
+    }
+
+    // Bracelet lock: one family per bracelet per visit
+    match /bracelets/{mac} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.familyId == me();
+      allow update: if signedIn() && resource.data.familyId == me() && request.resource.data.familyId == me();
+      allow delete: if signedIn() && (resource.data.familyId == me() || isSecurity());
+    }
+
+    match /reports/{id} {
+      function isOwner() { return resource.data.familyId == me(); }
+      function isAssigned() { return resource.data.assignedVolunteerId == me(); }
+
+      allow create: if signedIn()
+        && request.resource.data.familyId == me()
+        && request.resource.data.status == 'open'
+        && request.resource.data.assignedVolunteerId == null;
+      // Volunteers see open cases (the report holds no health); security sees all
+      allow read: if signedIn() && (isOwner() || isSecurity() || (isVolunteer() && resource.data.status != 'closed'));
+      allow update: if signedIn() && (
+        isSecurity()
+        // a volunteer takes an open case for themselves; the transaction makes it first come, first served
+        || (isVolunteer() && resource.data.status == 'open'
+            && request.resource.data.status == 'searching'
+            && request.resource.data.assignedVolunteerId == me()
+            && changes(['status', 'assignedVolunteerId']))
+        // the family or the assigned volunteer closes it
+        || ((isOwner() || isAssigned()) && request.resource.data.status == 'closed'
+            && changes(['status', 'closedAs', 'closedAt', 'photo']))
+      );
+
+      // Health: the family, the assigned volunteer and security only
+      match /private/health {
+        function report() { return get(/databases/$(database)/documents/reports/$(id)).data; }
+        // created in the same batch as the report, so read the report as it will be
+        allow create: if signedIn() && getAfter(/databases/$(database)/documents/reports/$(id)).data.familyId == me();
+        allow read, delete: if signedIn() && (report().familyId == me() || report().assignedVolunteerId == me() || isSecurity());
+      }
+    }
+
+    // Each volunteer writes their own on-duty status and location
+    match /volunteers/{uid} {
+      allow read: if isSecurity() || (signedIn() && me() == uid);
+      allow write: if isVolunteer() && me() == uid;
+    }
+
+    match /sightings/{id} {
+      allow read: if signedIn();
+      allow create: if isVolunteer() && request.resource.data.volunteerId == me();
+    }
+
+    // Passer-by: no login, can only drop a bracelet number (plus time and location)
+    // ponytail: no spam limit yet; one report per bracelet per minute is in the "later" list
+    match /passerbyReports/{id} {
+      allow create: if request.resource.data.keys().hasOnly(['braceletId', 'at', 'location'])
+        && request.resource.data.braceletId is string
+        && request.resource.data.braceletId.size() == 12;
+      allow read: if isVolunteer() || isSecurity();
+    }
+
+    match /zones/{id} {
+      allow read: if true;
+    }
+  }
+}
