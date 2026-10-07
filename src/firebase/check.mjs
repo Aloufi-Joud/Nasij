@@ -71,5 +71,54 @@ await step('close deletes health', async () => {
   assert.equal(await r.getReportHealth(id), null);
 });
 
+// Person 3: volunteer duty, sightings and passer-by (the account is still a volunteer here)
+const { getDoc } = await import('firebase/firestore');
+const { signOut } = await import('firebase/auth');
+const v = await import('./volunteers');
+const sg = await import('./sightings');
+const pb = await import('./passerby');
+const first = (subscribe) =>
+  new Promise((res, rej) => {
+    const stop = subscribe((list) => (stop(), res(list)), rej);
+    setTimeout(() => rej(new Error('no answer in 10 s')), 10_000);
+  });
+const vDoc = () => doc(db, 'volunteers', auth.currentUser.uid);
+const SITE = { latitude: 24.909, longitude: 46.705 }; // central plaza
+
+await step('volunteer goes on duty with a location', async () => {
+  await v.goOnDuty();
+  await v.updateVolunteerLocation(SITE);
+  const d = await getDoc(vDoc());
+  assert.equal(d.data()?.onDuty, true);
+  assert.equal(d.data()?.area, 'الساحة المركزية');
+});
+await step('volunteer adds a sighting', async () => assert.equal(await sg.addSighting(id, -72), true));
+await step('a second sighting within 10 s is skipped', async () => assert.equal(await sg.addSighting(id, -70), false));
+await step('sightings of the report list it', async () => {
+  const list = await first((ok, err) => sg.subscribeSightings(id, ok, err));
+  assert(list.some((s) => s.rssi === -72 && s.area === 'الساحة المركزية'));
+});
+await step('off duty deletes the volunteer document', async () => {
+  await v.goOffDuty();
+  assert.equal((await getDoc(vDoc())).exists(), false);
+});
+
+const since = Date.now() - 1000;
+await step('passer-by with no login reports a bracelet', async () => {
+  await signOut(auth);
+  await pb.createPasserbyReport('78:50:05:00:2d:12', null);
+});
+await step('a bad bracelet number is refused', () =>
+  assert.rejects(() => pb.createPasserbyReport('12345', null)),
+);
+await step('no login: a passer-by cannot read reports', () =>
+  assert.rejects(() => first((ok, err) => pb.subscribePasserbyReports('785005002D12', since, ok, err))),
+);
+await step('volunteer sees the passer-by report', async () => {
+  await signInWithEmailAndPassword(auth, email, password);
+  const list = await first((ok, err) => pb.subscribePasserbyReports('785005002D12', since, ok, err));
+  assert(list.length >= 1);
+});
+
 console.log('OK');
 process.exit(0);
