@@ -237,40 +237,42 @@ All three people build their screens first with fake data, so the whole app can 
 
 ### Phase 2: real data
 
-The work is split by topic: Person 2 builds the base everyone uses (Firebase, rules, reports, dashboard), Person 3 owns everything volunteer and passer-by, Person 1 owns everything bracelet and family.
+The work is split by topic: Person 2 builds the base everyone uses (Firebase, rules, reports, dashboard), Person 3 owns everything volunteer and passer-by, Person 1 owns everything bracelet and family. Since 2026-10-06 Person 1 also does Person 2's tasks.
+
+**Status 2026-10-07:** Person 1 and Person 2 tasks are done except the event boundary, the volunteer listening (waits for Person 3's `addSighting`) and the work that needs the phones (Mac install, NFC, final integration). Firebase project `nasij-0` is live with the rules published. How to use it: see the Firebase section in the README.
 
 **Person 1: Bluetooth, bracelet and family app, final integration**
 
 1. [x] Move the Bluetooth logic (parsing, smoothing, **direction**) into `src/ble/` so the family and volunteer screens share it
 2. [x] Feed real readings into the volunteer proximity screen instead of `useFakeSignal`
-3. [ ] Volunteer phone listens for bracelets with open reports and calls Person 3's `addSighting`, about once every 10 s per report (stay inside the free plan limits)
-4. [ ] Bracelet functions in `src/firebase/bracelets.ts`: `claimBracelet` (after the press check; refuse if another family holds it) and `releaseBracelet`
-5. [ ] "End of visit" button: deletes the member's data and releases the bracelet (no Cloud Functions, so the app does it)
-6. [ ] Family app on live data:
-   - real login with email and password
-   - "my child is lost" calls `createReport`
-   - double press and possible fall create an `emergency` / `fall` report automatically, so it reaches the nearest volunteer (journey step 5)
-   - show the real report status: "a volunteer is searching", then "found"
-   - delete member calls the backend
-   - replace the 150 m test circle with the real event boundary, kept as a constant in the code (one event, no need to store it in Firebase)
+3. [ ] (waits for Person 3's `addSighting`) Volunteer phone listens for bracelets with open reports and calls Person 3's `addSighting`, about once every 10 s per report (stay inside the free plan limits)
+4. [x] Bracelet functions in `src/firebase/bracelets.ts`: `claimBracelet` (after the press check; refuse if another family holds it) and `releaseBracelet`
+5. [x] "End of visit" button: deletes the member's data and releases the bracelet (no Cloud Functions, so the app does it)
+6. [ ] Family app on live data (all done except the event boundary; members are saved in `members/{familyUid}` and come back after login):
+   - [x] real login with email and password
+   - [x] "my child is lost" calls `createReport`
+   - [x] double press and possible fall create an `emergency` / `fall` report automatically, so it reaches the nearest volunteer (journey step 5)
+   - [x] show the real report status: "a volunteer is searching", then "found"
+   - [x] delete member calls the backend
+   - [ ] replace the 150 m test circle with the real event boundary, kept as a constant in the code (one event, no need to store it in Firebase)
 7. [ ] Next Mac install, all native additions at once: `@react-native-async-storage/async-storage` (saved data, and Firebase Auth needs it to stay logged in), `expo-image-picker` (real photo). No push notifications
 8. [ ] NFC stickers (NTAG213) with the report page URL and bracelet number; printed QR as a fallback
 9. [ ] Final integration and Mac install on all three phones
 
 **Person 2: Firebase base and security dashboard (items 1 to 5 come first, everyone depends on them)**
 
-1. [ ] Firebase project on the free Spark plan; enable Firestore and Auth with **email and password**
-2. [ ] Collections with the same shape as `mock.ts`: `members`, `reports`, `volunteers`, `sightings`, `passerbyReports`, `zones`, plus `users` (role: family, volunteer or security) and `bracelets` (who linked it this visit)
-3. [ ] Health data in a separate private document, e.g. `reports/{id}/private/health`. Firestore rules work per document and cannot hide one field, so this is the only way to show health to the assigned volunteer only
-4. [ ] Security rules:
+1. [x] Firebase project on the free Spark plan; enable Firestore and Auth with **email and password**
+2. [x] Collections with the same shape as `mock.ts`: `members`, `reports`, `volunteers`, `sightings`, `passerbyReports`, `zones`, plus `users` (role: family, volunteer or security) and `bracelets` (who linked it this visit)
+3. [x] Health data in a separate private document, e.g. `reports/{id}/private/health`. Firestore rules work per document and cannot hide one field, so this is the only way to show health to the assigned volunteer only
+4. [x] Security rules (`firestore.rules`, published, checked with 50 allow/deny cases on the emulator):
    - a family reads and writes only its own members
-   - an on-duty volunteer reads open reports, without health
+   - an on-duty volunteer reads open reports, without health (the rules check the volunteer role; on-duty is not checked yet)
    - only the assigned volunteer reads the health document
    - a passer-by with no login can only create a `passerbyReport` holding the bracelet number
    - security reads everything
    - **bracelet lock:** a bracelet can be linked only if no other family holds it this visit
-5. [ ] Report functions in `src/firebase/reports.ts`: `createReport`, `subscribeOpenReports`, `acceptReport` (transaction, so only one volunteer takes a case), `closeReport` (deletes health, photo and temporary access)
-6. [ ] Security dashboard on live data, including passer-by reports matched to the member by bracelet number (security is allowed to see the data)
+5. [x] Report functions in `src/firebase/reports.ts`: `createReport`, `subscribeOpenReports`, `acceptReport` (transaction, so only one volunteer takes a case), `closeReport` (deletes health, photo and temporary access)
+6. [x] Security dashboard on live data, with a security-only login, including passer-by reports matched to the member by bracelet number (security is allowed to see the data)
 
 **Person 3: volunteer and passer-by on live data**
 
