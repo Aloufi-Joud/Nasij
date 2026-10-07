@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { zones, type Health, type PasserbyReport, type Report, type Volunteer } from '../../../src/mock';
 import { getReportHealth } from '../../../src/firebase/reports';
-import { useLive, zoneOf } from './live';
+import { TYPE, useLive, zoneOf } from './live';
 import MapView from './MapView';
 
-const TYPE: Record<Report['type'], string> = { lost: 'مفقود', emergency: 'طوارئ', fall: 'سقوط محتمل' };
 const KIND = { child: 'طفل', elder: 'كبير سن' };
 const STATUS: Record<Report['status'], string> = { open: 'بانتظار متطوع', searching: 'متطوع يبحث', closed: 'مغلق' };
 
@@ -48,10 +47,8 @@ export default function App() {
   const live = useLive();
   // memo: the map redraws its report markers only when Firestore sends new reports
   const open = useMemo(() => [...live.reports].sort(byUrgency), [live.reports]);
-  const passerby = live.passerby;
   const [selected, select] = useSelected(open);
   const now = useNow();
-  const onDuty = live.volunteers;
   const lastSignal = live.events.find((e) => e.kind === 'signal');
   // phone layout stacks the detail under the list, so bring it into view after it renders
   useEffect(() => {
@@ -81,7 +78,7 @@ export default function App() {
           </div>
           <div>
             <dt>متطوعون في الخدمة</dt>
-            <dd>{onDuty.length}</dd>
+            <dd>{live.volunteers.length}</dd>
           </div>
         </dl>
       </header>
@@ -137,11 +134,11 @@ export default function App() {
 
           <section aria-labelledby="h-passerby">
             <h2 id="h-passerby">بلاغات المارّة</h2>
-            {passerby.length === 0 ? (
+            {live.passerby.length === 0 ? (
               <p className="empty">لم يبلّغ أي مارّ.</p>
             ) : (
               <ul className="plain">
-                {passerby.map((p) => {
+                {live.passerby.map((p) => {
                   const member = live.memberOf(p.braceletId);
                   const report = open.find((r) => r.braceletId === p.braceletId);
                   const label = (
@@ -173,7 +170,7 @@ export default function App() {
             <ul className="zones">
               {zones.map((z) => {
                 const cases = open.filter((r) => zoneOf(r.location)?.id === z.id).length;
-                const vols = onDuty.filter((v) => zoneOf(v.location)?.id === z.id).length;
+                const vols = live.volunteers.filter((v) => zoneOf(v.location)?.id === z.id).length;
                 return (
                   <li key={z.id} className={cases ? 'busy' : ''}>
                     <strong>{z.name}</strong>
@@ -187,12 +184,12 @@ export default function App() {
         </aside>
 
         <section className="map" aria-label="خريطة الفعالية">
-          <MapView zones={zones} reports={open} volunteers={onDuty} lastSignal={lastSignal} selectedId={selected?.id ?? null} onSelect={select} />
+          <MapView zones={zones} reports={open} volunteers={live.volunteers} lastSignal={lastSignal} selectedId={selected?.id ?? null} onSelect={select} />
         </section>
 
         <section id="detail" className="detail" aria-live="polite" tabIndex={-1}>
           {selected ? (
-            <Detail r={selected} now={now} volunteers={onDuty} passerby={passerby} onClose={() => select(null)} />
+            <Detail r={selected} now={now} volunteers={live.volunteers} passerby={live.passerby} onClose={() => select(null)} />
           ) : (
             <p className="empty">اختر بلاغًا من القائمة أو من الخريطة لعرض تفاصيله.</p>
           )}

@@ -11,7 +11,7 @@ import type { Kind, Point, Report, ReportType } from '../../mock';
 import { metresBetween } from '../../components/geo';
 import { PAIR_RSSI, newPairing, pairStep, type Pairing } from '../../ble/pairing';
 import { listen, onBluetoothState } from '../../ble/scanner';
-import { LOST_AFTER_MS, WINDOW, braceletMac, cleanMac, parseAlarm, summarize, type Trend } from '../../ble/signal';
+import { LOST_AFTER_MS, WINDOW, braceletMac, cleanMac, parseAlarm, summarize, type Signal, type Trend } from '../../ble/signal';
 import { Banner } from '../../components/Banner';
 import { BottomNav } from '../../components/BottomNav';
 import { Button } from '../../components/Button';
@@ -42,7 +42,6 @@ type Zone = 'NEAR' | 'MEDIUM' | 'FAR' | 'LOST';
 type LogKind = Zone | 'SOS' | 'FALL' | 'REPORT' | 'FOUND' | 'EDGE';
 type PairView = { mac: string; heard: boolean; near: boolean; timedOut: boolean };
 type AlertKind = 'SOS' | 'FALL';
-type Reading = { id: string; rssi: number; smooth: number; trend: Trend; lastSeen: number };
 
 // The person wearing the bracelet, entered by the family in the app
 // ponytail: local form shape (age as text, health as two fields); becomes mock.ts Member with Firebase
@@ -64,6 +63,8 @@ const ZONE_UI: Record<LogKind, { label: string; color: string }> = {
   FAR: { label: 'بعيد عنك', color: C.danger },
   LOST: { label: 'انقطعت الإشارة', color: C.danger },
 };
+const failed = (title: string) => Alert.alert(title, 'تأكد من الاتصال بالإنترنت وحاول مرة ثانية.');
+
 const TREND_UI: Record<Trend, string> = {
   approaching: 'يقترب منك',
   away: 'يبتعد عنك',
@@ -121,7 +122,7 @@ type Screen = 'lost' | 'found' | null;
 
 export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: () => void; onLogout: () => void }) {
   const [bt, setBt] = useState<string>('');
-  const [reading, setReading] = useState<Reading | null>(null);
+  const [reading, setReading] = useState<Signal | null>(null);
   const [zone, setZone] = useState<Zone | null>(null);
   const [log, setLog] = useState<{ time: string; zone: LogKind }[]>([]);
   const [sos, setSos] = useState<AlertKind | null>(null);
@@ -147,7 +148,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   const autoReport = useRef<(type: 'emergency' | 'fall') => void>(() => {});
   const [pairView, setPairView] = useState<PairView | null>(null);
 
-  const latest = useRef<Reading | null>(null);
+  const latest = useRef<Signal | null>(null);
   const sosRef = useRef(false);
   const wasTriggered = useRef<Record<number, boolean>>({});
   const history = useRef<number[]>([]);
@@ -172,6 +173,9 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     return () => watch?.remove();
   }, []);
 
+  const addLog = (kind: LogKind) =>
+    setLog((old) => [{ time: new Date().toLocaleTimeString(), zone: kind }, ...old].slice(0, 20));
+
   useEffect(() => {
     const stopState = onBluetoothState(setBt);
     const stopScan = listen((device) => {
@@ -183,15 +187,14 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
       // Linking: wait for a new double press from that bracelet while it is held close
       if (pairing.current) pairStep(pairing.current, device.id, mac, device.rssi, parseAlarm(device));
 
-      const id = identify(device);
-      if (!id) return;
+      if (!identify(device)) return;
       const a = parseAlarm(device);
       if (a && (a.frame === 0x21 || a.frame === 0x23)) alarm.current[a.frame] = { triggered: a.triggered, count: a.count };
       const t = Date.now();
       // Coming back after being lost: start the average fresh
       if (latest.current && t - latest.current.lastSeen > LOST_AFTER_MS) history.current = [];
       history.current = [...history.current, device.rssi].slice(-WINDOW);
-      latest.current = { id, rssi: device.rssi, ...summarize(history.current), lastSeen: t };
+      latest.current = { rssi: device.rssi, ...summarize(history.current), lastSeen: t };
     });
 
     // Twice a second: decide the zone and refresh the screen
@@ -208,7 +211,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         // Server-side lock: one family per bracelet per visit
         claimBracelet(p.mac)
           .then((ok) => (ok ? link(p.mac) : Alert.alert('السوار مرتبط بعائلة ثانية', 'ما يمكن ربطه حتى تنهي العائلة زيارتها.')))
-          .catch(() => Alert.alert('تعذر ربط السوار', 'تأكد من الاتصال بالإنترنت وحاول مرة ثانية.'));
+          .catch(() => failed('تعذر ربط السوار'));
       } else if (p) {
         setPairView({
           mac: p.mac,
@@ -235,7 +238,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         wasTriggered.current[frame] = a.triggered;
         if (!isNew) continue;
         // Always log it, even if another alert is already on screen
-        setLog((old) => [{ time: new Date().toLocaleTimeString(), zone: kind as LogKind }, ...old].slice(0, 20));
+        addLog(kind);
         Vibration.vibrate([0, 800, 300, 800, 300, 800]);
         if (!sosRef.current) {
           sosRef.current = true;
@@ -255,7 +258,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
       if (confirmed !== zoneRef.current) {
         zoneRef.current = confirmed;
         setZone(confirmed);
-        setLog((old) => [{ time: new Date().toLocaleTimeString(), zone: confirmed }, ...old].slice(0, 20));
+        addLog(confirmed);
         if (confirmed === 'FAR' || confirmed === 'LOST') Vibration.vibrate([0, 500, 200, 500]);
       }
     }, 500);
@@ -309,11 +312,8 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
       age: Number(m.age) || 0,
       health: m.condition ? { condition: m.condition, notes: m.notes } : null,
       braceletId: mac,
-    }).catch(() => Alert.alert('تعذر حفظ البيانات', 'تأكد من الاتصال بالإنترنت وحاول مرة ثانية.'));
+    }).catch(() => failed('تعذر حفظ البيانات'));
   };
-
-  const addLog = (kind: LogKind) =>
-    setLog((old) => [{ time: new Date().toLocaleTimeString(), zone: kind }, ...old].slice(0, 20));
 
   // Log and vibrate once each time the bracelet reaches the event edge
   useEffect(() => {
@@ -357,10 +357,9 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
       setJustFound(false);
       addLog('REPORT');
     } catch {
-      Alert.alert('تعذر إرسال البلاغ', 'تأكد من الاتصال بالإنترنت وحاول مرة ثانية.');
+      failed('تعذر إرسال البلاغ');
     }
   };
-  const sendLost = (description: string, photo: string | null) => sendReport('lost', description, photo);
   // Called from the scan timer, so it reads this render's member and report through a ref.
   // One open report at a time: a second press while a case is open adds nothing.
   autoReport.current = (type) => {
@@ -370,9 +369,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   // Closing also deletes the photo and health data; the live report then shows "found"
   const confirmFound = () => {
     if (!report) return;
-    closeReport(report.id, 'found').catch(() =>
-      Alert.alert('تعذر إغلاق البلاغ', 'تأكد من الاتصال بالإنترنت وحاول مرة ثانية.'),
-    );
+    closeReport(report.id, 'found').catch(() => failed('تعذر إغلاق البلاغ'));
   };
 
   const link = (m: string) => {
@@ -498,8 +495,6 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     </View>
   );
 
-  const openReport = !!report;
-
   return (
     <View style={s.screen}>
       <Header
@@ -538,7 +533,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         {btOff && <Banner tone="danger" icon="bluetooth" text="شغّلي البلوتوث عشان نتابع السوار" />}
 
         {screen === 'lost' && member && (
-          <LostScreen name={member.name} onSend={sendLost} onCancel={() => setScreen(null)} />
+          <LostScreen name={member.name} onSend={(d, photo) => sendReport('lost', d, photo)} onCancel={() => setScreen(null)} />
         )}
         {screen === 'found' && report && (
           <FoundScreen name={report.member.name} onConfirm={confirmFound} onCancel={() => setScreen(null)} />
@@ -862,7 +857,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
           setScreen(null);
         }}
         tabs={[
-          { key: 'home', label: 'الرئيسية', icon: 'home-outline', dot: openReport },
+          { key: 'home', label: 'الرئيسية', icon: 'home-outline', dot: !!report },
           { key: 'map', label: 'الخريطة', icon: 'map-outline' },
           { key: 'alerts', label: 'التنبيهات', icon: 'notifications-outline' },
         ]}

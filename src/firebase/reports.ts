@@ -2,7 +2,7 @@
 // reports/{id}/private/health: rules work per document, so this is the only way
 // to show health to the assigned volunteer alone.
 import {
-  collection, doc, getDoc, onSnapshot, query, runTransaction, where, writeBatch,
+  collection, doc, getDoc, onSnapshot, query, runTransaction, where, writeBatch, type DocumentSnapshot,
 } from 'firebase/firestore';
 import { auth, db } from './index';
 import type { ClosedAs, Health, Report } from '../mock';
@@ -11,6 +11,8 @@ export type NewReport = Omit<Report, 'id' | 'createdAt' | 'status' | 'assignedVo
 
 const reports = collection(db, 'reports');
 const healthDoc = (id: string) => doc(db, 'reports', id, 'private', 'health');
+// Reports as listed and followed: health stays in its own document, so it is always null here
+const toReport = (d: DocumentSnapshot): Report => ({ ...(d.data() as Omit<Report, 'id' | 'health'>), id: d.id, health: null });
 
 export async function createReport({ health, ...r }: NewReport): Promise<string> {
   const ref = doc(reports);
@@ -26,18 +28,14 @@ export async function createReport({ health, ...r }: NewReport): Promise<string>
 // Open and searching reports, newest first, without health. Returns the unsubscribe function.
 export function subscribeOpenReports(onChange: (reports: Report[]) => void): () => void {
   return onSnapshot(query(reports, where('status', 'in', ['open', 'searching'])), (snap) =>
-    onChange(
-      snap.docs
-        .map((d) => ({ ...(d.data() as Omit<Report, 'id' | 'health'>), id: d.id, health: null }))
-        .sort((a, b) => b.createdAt - a.createdAt),
-    ),
+    onChange(snap.docs.map(toReport).sort((a, b) => b.createdAt - a.createdAt)),
   );
 }
 
 // One report, live (family status screen, volunteer case screen). null once deleted.
 export function subscribeReport(id: string, onChange: (report: Report | null) => void): () => void {
   return onSnapshot(doc(reports, id), (d) =>
-    onChange(d.exists() ? { ...(d.data() as Omit<Report, 'id' | 'health'>), id: d.id, health: null } : null),
+    onChange(d.exists() ? toReport(d) : null),
   );
 }
 
