@@ -3,7 +3,7 @@
 // ponytail: hand-placed approximation in metres around SITE.center, not survey data.
 import L from 'leaflet';
 import type { Zone } from '../../../src/mock';
-import { SITE, offset, sectorOf } from './live';
+import { SITE, at, offset, sectorOf } from './live';
 
 type XY = [number, number]; // metres east, north of the site centre
 
@@ -102,5 +102,3 @@ export function drawExpoSite(m: L.Map, zones: Zone[]) {
   // open on the core, where the cases are; zoom out to see the whole site
   return L.latLngBounds([ll([-R - 250, -R - 250]), ll([R + 250, R + 250])]);
 }
-
-const at = (p: { latitude: number; longitude: number }): L.LatLngTuple => [p.latitude, p.longitude];

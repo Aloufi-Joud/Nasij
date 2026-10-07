@@ -10,6 +10,10 @@ import { metresBetween } from '../../../src/components/geo';
 // Drawn Expo 2030 site, shared with MapView (approximation of the published masterplan, not survey data)
 export const SITE = { center: { latitude: 24.909, longitude: 46.705 }, radius: 650 };
 
+export const TYPE: Record<Report['type'], string> = { lost: 'مفقود', emergency: 'طوارئ', fall: 'سقوط محتمل' };
+
+export const at = (p: Point): [number, number] => [p.latitude, p.longitude];
+
 export function offset(p: Point, metres: number, deg: number): Point {
   const a = (deg * Math.PI) / 180;
   return {
@@ -70,7 +74,7 @@ export function useLive() {
   const events: LiveEvent[] = [
     ...reports.map((r) => ({
       id: r.id, at: r.createdAt, kind: 'report' as const, reportId: r.id,
-      text: `بلاغ جديد: ${r.member.name}، ${r.type === 'lost' ? 'مفقود' : r.type === 'fall' ? 'سقوط محتمل' : 'طوارئ'}`,
+      text: `بلاغ جديد: ${r.member.name}، ${TYPE[r.type]}`,
     })),
     ...sightings.flatMap((s) => {
       const r = reports.find((x) => x.id === s.reportId);

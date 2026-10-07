@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import { C } from '../../../src/theme';
 import type { Report, Volunteer, Zone } from '../../../src/mock';
-import { SITE, bearing, offset, type LiveEvent } from './live';
+import { SITE, at, bearing, offset, type LiveEvent } from './live';
 import { drawExpoSite, zoneColour } from './expoSite';
 
 type Props = {
@@ -14,7 +14,6 @@ type Props = {
   onSelect: (id: string) => void;
 };
 
-const at = (p: { latitude: number; longitude: number }): L.LatLngTuple => [p.latitude, p.longitude];
 // Leaflet renders tooltip strings as HTML; names come from users, so pass them as text
 const text = (s: string) => Object.assign(document.createElement('span'), { textContent: s });
 const colour = (r: Report) => (r.type === 'lost' ? C.warn : C.danger);
