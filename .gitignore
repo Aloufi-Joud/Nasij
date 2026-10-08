@@ -39,3 +39,9 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# generated launch videos
+brag-output*/
+
+# personal test script, kept locally
+nasij volunteer.py

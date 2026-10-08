@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client';
 import 'leaflet/dist/leaflet.css';
 import { C } from '../../../src/theme';
 import App from './App';
+import { DEMO } from './live';
 import Login from './Login';
 import './styles.css';
 
@@ -9,7 +10,11 @@ import './styles.css';
 for (const [k, v] of Object.entries(C)) document.documentElement.style.setProperty(`--${k}`, v);
 
 createRoot(document.getElementById('root')!).render(
-  <Login>
+  DEMO ? (
     <App />
-  </Login>,
+  ) : (
+    <Login>
+      <App />
+    </Login>
+  ),
 );

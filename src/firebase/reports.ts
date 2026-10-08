@@ -2,7 +2,7 @@
 // reports/{id}/private/health and private/contact: rules work per document, so this is the only way
 // to show them to the assigned volunteer alone.
 import {
-  collection, doc, getDoc, onSnapshot, query, runTransaction, where, writeBatch, type DocumentSnapshot,
+  collection, doc, getDoc, getDocs, onSnapshot, query, runTransaction, where, writeBatch, type DocumentSnapshot,
 } from 'firebase/firestore';
 import { auth, db } from './index';
 import type { ClosedAs, Health, Report } from '../mock';
@@ -39,6 +39,14 @@ export function subscribeOpenReports(onChange: (reports: Report[]) => void): () 
   );
 }
 
+// This family's open and searching reports, so they come back after the app restarts
+export async function loadMyOpenReports(): Promise<Report[]> {
+  const familyId = auth.currentUser?.uid;
+  if (!familyId) return [];
+  const snap = await getDocs(query(reports, where('familyId', '==', familyId), where('status', 'in', ['open', 'searching'])));
+  return snap.docs.map(toReport).sort((a, b) => b.createdAt - a.createdAt);
+}
+
 // One report, live (family status screen, volunteer case screen). null once deleted.
 export function subscribeReport(id: string, onChange: (report: Report | null) => void): () => void {
   return onSnapshot(doc(reports, id), (d) =>
@@ -69,11 +77,12 @@ export async function getReportContact(id: string): Promise<{ phone: string | nu
   return { phone: d?.phone ?? null, code: d?.code ?? null };
 }
 
-// Closing wipes what was only needed for the search: health, phone and photo
+// Closing wipes what was only needed for the search: health, phone, photo and the last sighting
 export async function closeReport(id: string, closedAs: ClosedAs): Promise<void> {
   const batch = writeBatch(db);
   batch.update(doc(reports, id), { status: 'closed', closedAs, closedAt: Date.now(), photo: null });
   batch.delete(healthDoc(id));
   batch.delete(contactDoc(id));
+  batch.delete(doc(db, 'reports', id, 'seen', 'last'));
   await batch.commit();
 }

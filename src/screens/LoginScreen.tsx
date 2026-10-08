@@ -4,17 +4,20 @@ import { useState } from 'react';
 import { createUserWithEmailAndPassword, sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from '../components/Text';
+import { Pressable } from '../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
-import { C, F, ui } from '../theme';
+import { C, F, shadow, ui } from '../theme';
 import { Button } from '../components/Button';
-import type { IconName } from '../components/Header';
+import { LangButton, type IconName } from '../components/Header';
+import { tr } from '../i18n';
 
 export type Role = 'family' | 'volunteer';
 
-const ROLES: { key: Role; title: string; text: string; icon: IconName }[] = [
-  { key: 'family', title: 'عائلة', text: 'اربط سوار طفلك أو كبير السن وتابعه', icon: 'people-outline' },
-  { key: 'volunteer', title: 'متطوع', text: 'استقبل البلاغات القريبة وساعد في البحث', icon: 'hand-left-outline' },
+const ROLES = (): { key: Role; title: string; text: string; icon: IconName }[] => [
+  { key: 'family', title: tr('عائلة', 'Family'), text: tr('اربط سوار طفلك أو كبير السن وتابعه', 'Link your child’s or elder’s bracelet and keep track'), icon: 'people-outline' },
+  { key: 'volunteer', title: tr('متطوع', 'Volunteer'), text: tr('استقبل البلاغات القريبة وساعد في البحث', 'Get nearby reports and help search'), icon: 'hand-left-outline' },
 ];
 
 export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void }) {
@@ -44,10 +47,10 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
     } catch (e: any) {
       // One message for a wrong email or password, so the screen never tells which emails have accounts
       setError(
-        e.code === 'auth/email-already-in-use' || e.code === 'auth/wrong-password' ? 'البريد أو كلمة المرور غير صحيحة'
-        : e.code === 'auth/network-request-failed' ? 'لا يوجد اتصال بالإنترنت'
-        : e.code === 'auth/too-many-requests' ? 'محاولات كثيرة، حاول بعد قليل'
-        : 'تعذر تسجيل الدخول، حاول مرة أخرى',
+        e.code === 'auth/email-already-in-use' || e.code === 'auth/wrong-password' ? tr('البريد أو كلمة المرور غير صحيحة', 'Wrong email or password')
+        : e.code === 'auth/network-request-failed' ? tr('لا يوجد اتصال بالإنترنت', 'No internet connection')
+        : e.code === 'auth/too-many-requests' ? tr('محاولات كثيرة، حاول بعد قليل', 'Too many attempts, try again shortly')
+        : tr('تعذر تسجيل الدخول، حاول مرة أخرى', 'Could not sign in, try again'),
       );
     } finally {
       setBusy(false);
@@ -57,21 +60,24 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
   // Same message whether or not the email has an account
   const resetPassword = async () => {
     const mail = email.trim();
-    if (!/^\S+@\S+\.\S+$/.test(mail)) return setError('اكتب بريدك الإلكتروني أول');
+    if (!/^\S+@\S+\.\S+$/.test(mail)) return setError(tr('اكتب بريدك الإلكتروني أول', 'Enter your email first'));
     setError('');
     await sendPasswordResetEmail(auth, mail).catch(() => {});
-    setInfo('إذا كان البريد مسجّلًا، بيوصلك رابط لتغيير كلمة المرور');
+    setInfo(tr('إذا كان البريد مسجّلًا، بيوصلك رابط لتغيير كلمة المرور', 'If this email has an account, a reset link is on its way'));
   };
 
   return (
     <ScrollView style={s.screen} contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
+      <View style={s.top}>
+        <LangButton dark />
+      </View>
       <View style={s.logo}>
         <Ionicons name="shield-checkmark" size={38} color="#fff" />
       </View>
-      <Text style={s.name}>نسيج</Text>
-      <Text style={s.tagline}>ما أحد يضيع في الزحام</Text>
+      <Text style={s.name}>{tr('نسيج', 'Nasij')}</Text>
+      <Text style={s.tagline}>{tr('ما أحد يضيع في الزحام', 'No one gets lost in the crowd')}</Text>
 
-      <Text style={ui.caption}>البريد الإلكتروني</Text>
+      <Text style={ui.caption}>{tr('البريد الإلكتروني', 'Email')}</Text>
       <TextInput
         style={s.input}
         value={email}
@@ -85,12 +91,12 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
         textAlign="left"
       />
 
-      <Text style={ui.caption}>كلمة المرور</Text>
+      <Text style={ui.caption}>{tr('كلمة المرور', 'Password')}</Text>
       <TextInput
         style={s.input}
         value={password}
         onChangeText={setPassword}
-        placeholder="٦ أحرف أو أكثر"
+        placeholder={tr('٦ أحرف أو أكثر', '6 characters or more')}
         placeholderTextColor={C.faint}
         secureTextEntry
         autoCapitalize="none"
@@ -98,8 +104,8 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
         textAlign="right"
       />
 
-      <Text style={ui.caption}>أنا</Text>
-      {ROLES.map((r) => {
+      <Text style={ui.caption}>{tr('أنا', 'I am')}</Text>
+      {ROLES().map((r) => {
         const on = role === r.key;
         return (
           <Pressable key={r.key} style={[ui.card, s.role, on && s.roleOn]} onPress={() => setRole(r.key)}>
@@ -116,32 +122,31 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
       })}
 
       <Pressable onPress={resetPassword} hitSlop={8} style={{ marginTop: 10 }}>
-        <Text style={s.forgot}>نسيت كلمة المرور؟</Text>
+        <Text style={s.forgot}>{tr('نسيت كلمة المرور؟', 'Forgot password?')}</Text>
       </Pressable>
 
       {!!error && <Text style={s.error}>{error}</Text>}
       {!!info && <Text style={s.info}>{info}</Text>}
-      <Button label={busy ? 'جارٍ الدخول…' : 'دخول'} onPress={login} disabled={!ready} style={{ marginTop: 22 }} />
+      <Button label={busy ? tr('جارٍ الدخول…', 'Signing in…') : tr('دخول', 'Sign in')} onPress={login} disabled={!ready} style={{ marginTop: 22 }} />
     </ScrollView>
   );
 }
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.bg },
-  body: { padding: 24, paddingTop: 90 },
+  body: { padding: 24, paddingTop: 56 },
+  top: { flexDirection: 'row', marginBottom: 10 }, // button sits at the far (end) corner
   logo: {
-    width: 76, height: 76, borderRadius: 24, backgroundColor: C.primary,
+    width: 84, height: 84, borderRadius: 28, backgroundColor: C.primary,
     alignSelf: 'center', alignItems: 'center', justifyContent: 'center',
+    ...shadow.card, shadowOpacity: 0.25,
   },
-  name: { color: C.primary, fontSize: 30, fontWeight: '700', textAlign: 'center', marginTop: 14 },
+  name: { color: C.primary, fontSize: 34, fontWeight: '800', textAlign: 'center', marginTop: 16 },
   tagline: { color: C.muted, fontSize: F.body, textAlign: 'center', marginTop: 4, marginBottom: 10 },
-  input: {
-    backgroundColor: '#fff', borderWidth: 1.5, borderColor: C.inputBorder, borderRadius: 12,
-    paddingVertical: 13, paddingHorizontal: 14, fontSize: 16, color: C.text,
-  },
+  input: { ...ui.input, fontSize: 16 },
   role: { flexDirection: 'row-reverse', alignItems: 'center', gap: 12, marginBottom: 10 },
   roleOn: { borderColor: C.primary },
-  roleIcon: { width: 48, height: 48, borderRadius: 14, backgroundColor: C.techBg, alignItems: 'center', justifyContent: 'center' },
+  roleIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: C.techBg, alignItems: 'center', justifyContent: 'center' },
   error: { color: C.danger, fontSize: F.body, textAlign: 'right', marginTop: 14 },
   info: { color: C.safe, fontSize: F.body, textAlign: 'right', marginTop: 14 },
   forgot: { color: C.accent, fontSize: 13.5, fontWeight: '600', textAlign: 'right' },

@@ -1,6 +1,7 @@
 // Full-width button: primary (teal), danger (red) or ghost (outlined)
 import type { StyleProp, ViewStyle } from 'react-native';
-import { Pressable, Text } from 'react-native';
+import { Text } from './Text';
+import { Pressable } from './Motion';
 import { Ionicons } from '@expo/vector-icons';
 import { C, ui } from '../theme';
 import type { IconName } from './Header';
