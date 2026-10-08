@@ -1,13 +1,15 @@
 // Nasij family app: several members, one bracelet each. Measures each signal and alerts when one moves away.
 // Same logic as the tested laptop scanner (nasij_scanner.py)
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, Vibration, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Vibration, View } from 'react-native';
+import { Text, TextInput } from '../../components/Text';
+import { FadeIn, Pressable } from '../../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
 import { State, type Device } from 'react-native-ble-plx';
 import MapView, { Circle, Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { C, ui } from '../../theme';
-import { LANGUAGES, MAX_AGE, type Gender, type Kind, type Language, type Member, type Point, type Report, type ReportType } from '../../mock';
+import { MAX_AGE, type Gender, type Kind, type Language, type Member, type Point, type Report, type ReportType } from '../../mock';
 import { metresBetween } from '../../components/geo';
 import { PAIR_RSSI, newPairing, pairStep, type Pairing } from '../../ble/pairing';
 import { listen, onBluetoothState } from '../../ble/scanner';
@@ -23,9 +25,11 @@ import { auth } from '../../firebase';
 import { claimBracelet, releaseBracelet } from '../../firebase/bracelets';
 import { deleteMember, loadMembers, saveMember } from '../../firebase/members';
 import { loadProfile, saveProfile, type Profile } from '../../firebase/profile';
-import { closeReport, createReport, subscribeReport } from '../../firebase/reports';
+import { closeReport, createReport, getReportContact, loadMyOpenReports, subscribeReport } from '../../firebase/reports';
+import { subscribeLastSeen, type LastSeen } from '../../firebase/sightings';
 import FoundScreen from './FoundScreen';
 import LostScreen from './LostScreen';
+import { isEn, langName, tr } from '../../i18n';
 
 const NEAR = -65;           // stronger than this = near
 const FAR = -80;            // weaker than this = far
@@ -53,10 +57,13 @@ const EMPTY: Form = {
   name: '', kind: 'child', gender: 'male', age: '', language: 'ar', phone: '', description: '', condition: '', notes: '',
 };
 const KIND_UI: Record<Kind, { label: string; color: string }> = {
-  child: { label: 'طفل', color: C.child },
-  elder: { label: 'كبير سن', color: C.elder },
+  child: { get label() { return tr('طفل', 'Child'); }, color: C.child },
+  elder: { get label() { return tr('كبير سن', 'Elderly'); }, color: C.elder },
 };
-const GENDER_UI: Record<Gender, string> = { male: 'ذكر', female: 'أنثى' };
+const GENDER_UI: Record<Gender, string> = {
+  get male() { return tr('ذكر', 'Male'); },
+  get female() { return tr('أنثى', 'Female'); },
+};
 
 // Older member documents miss the newer fields
 const fromDoc = (m: Member): FamMember => ({
@@ -72,31 +79,32 @@ const toDoc = (m: Form & { id?: string; mac: string | null }) => ({
 
 // What stops the form from saving, or null. A child needs a parent's phone: the volunteer calls it.
 function formError(f: Form): string | null {
-  if (!f.name.trim()) return 'اكتب الاسم';
-  if (!f.age) return 'اكتب العمر';
-  if (Number(f.age) > MAX_AGE[f.kind]) return `العمر لازم يكون ${MAX_AGE[f.kind]} سنة أو أقل لـ${KIND_UI[f.kind].label}`;
-  if (f.kind === 'child' && !f.phone) return 'اكتب رقم جوال ولي الأمر';
-  if (f.phone && !/^\d{9,15}$/.test(f.phone)) return 'رقم الجوال غير صحيح';
+  if (!f.name.trim()) return tr('اكتب الاسم', 'Enter the name');
+  if (!f.age) return tr('اكتب العمر', 'Enter the age');
+  if (Number(f.age) > MAX_AGE[f.kind])
+    return tr(`العمر لازم يكون ${MAX_AGE[f.kind]} سنة أو أقل لـ${KIND_UI[f.kind].label}`, `Age must be ${MAX_AGE[f.kind]} or under for ${KIND_UI[f.kind].label.toLowerCase()}`);
+  if (f.kind === 'child' && !f.phone) return tr('اكتب رقم جوال ولي الأمر', 'Enter the guardian’s phone number');
+  if (f.phone && !/^\d{9,15}$/.test(f.phone)) return tr('رقم الجوال غير صحيح', 'Invalid phone number');
   return null;
 }
 
 const ZONE_UI: Record<LogKind, { label: string; color: string }> = {
-  SOS: { label: 'طلب مساعدة', color: C.danger },
-  FALL: { label: 'احتمال سقوط', color: C.danger },
-  REPORT: { label: 'بلاغ للمتطوعين', color: C.danger },
-  FOUND: { label: 'انقفل البلاغ', color: C.safe },
-  EDGE: { label: 'قرب حدود الفعالية', color: C.danger },
-  NEAR: { label: 'قريب منك', color: C.safe },
-  MEDIUM: { label: 'مسافة متوسطة', color: C.warn },
-  FAR: { label: 'بعيد عنك', color: C.danger },
-  LOST: { label: 'انقطعت الإشارة', color: C.danger },
+  SOS: { get label() { return tr('طلب مساعدة', 'Help request'); }, color: C.danger },
+  FALL: { get label() { return tr('احتمال سقوط', 'Possible fall'); }, color: C.danger },
+  REPORT: { get label() { return tr('بلاغ للمتطوعين', 'Reported to volunteers'); }, color: C.danger },
+  FOUND: { get label() { return tr('انقفل البلاغ', 'Report closed'); }, color: C.safe },
+  EDGE: { get label() { return tr('قرب حدود الفعالية', 'Near the event edge'); }, color: C.danger },
+  NEAR: { get label() { return tr('قريب منك', 'Close to you'); }, color: C.safe },
+  MEDIUM: { get label() { return tr('مسافة متوسطة', 'Medium distance'); }, color: C.warn },
+  FAR: { get label() { return tr('بعيد عنك', 'Far from you'); }, color: C.danger },
+  LOST: { get label() { return tr('انقطعت الإشارة', 'Signal lost'); }, color: C.danger },
 };
-const failed = (title: string) => Alert.alert(title, 'تأكد من الاتصال بالإنترنت وحاول مرة ثانية.');
+const failed = (title: string) => Alert.alert(title, tr('تأكد من الاتصال بالإنترنت وحاول مرة ثانية.', 'Check your internet connection and try again.'));
 
 const TREND_UI: Record<Trend, string> = {
-  approaching: 'يقترب منك',
-  away: 'يبتعد عنك',
-  steady: 'ثابت',
+  get approaching() { return tr('يقترب منك', 'Coming closer'); },
+  get away() { return tr('يبتعد عنك', 'Moving away'); },
+  get steady() { return tr('ثابت', 'Steady'); },
 };
 
 // 0 to 4 bars, like the prototype
@@ -200,6 +208,8 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   const [reports, setReports] = useState<Record<string, Report>>({});
   // Handover code per member id: the volunteer asks for it before handing them over
   const [codes, setCodes] = useState<Record<string, string>>({});
+  // Where a volunteer's phone last heard the bracelet of an open report, per member id
+  const [seen, setSeen] = useState<Record<string, LastSeen | null>>({});
   const [screen, setScreen] = useState<Screen>(null);
   const [justFound, setJustFound] = useState<string | null>(null);
   const [linkFor, setLinkFor] = useState<string | null>(null); // member whose link panel is open
@@ -218,6 +228,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   const meRef = useRef<Point | null>(null);
   const centerRef = useRef<Point | null>(null);
   const sosRef = useRef(false);
+  const scrollRef = useRef<ScrollView>(null);
 
   // The scan timer reads the latest members through a ref
   useEffect(() => {
@@ -290,9 +301,12 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         // Server-side lock: one family per bracelet per visit
         claimBracelet(pr.p.mac)
           .then((ok) =>
-            ok ? link.current(pr.memberId, pr.p.mac) : Alert.alert('السوار مرتبط بعائلة ثانية', 'ما يمكن ربطه حتى تنهي العائلة زيارتها.'),
+            ok ? link.current(pr.memberId, pr.p.mac) : Alert.alert(
+                  tr('السوار مرتبط بعائلة ثانية', 'Bracelet linked to another family'),
+                  tr('ما يمكن ربطه حتى تنهي العائلة زيارتها.', 'It can’t be linked until that family ends its visit.'),
+                ),
           )
-          .catch(() => failed('تعذر ربط السوار'));
+          .catch(() => failed(tr('تعذر ربط السوار', 'Couldn’t link the bracelet')));
       } else if (pr) {
         setPairView({
           memberId: pr.memberId,
@@ -375,9 +389,9 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
       .catch(() => {});
   }, []);
   const profileError = !profileDraft.name.trim()
-    ? 'اكتب اسمك'
+    ? tr('اكتب اسمك', 'Enter your name')
     : !/^\d{9,15}$/.test(profileDraft.phone)
-      ? 'اكتب رقم جوال صحيح'
+      ? tr('اكتب رقم جوال صحيح', 'Enter a valid phone number')
       : null;
   const saveMyProfile = () => {
     if (profileError) return;
@@ -386,24 +400,38 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     setProfileSaved(true);
     saveProfile(p).catch(() => {
       setProfileSaved(false);
-      failed('تعذر حفظ بياناتك');
+      failed(tr('تعذر حفظ بياناتك', 'Couldn’t save your details'));
     });
   };
 
-  // The members saved on this account come back after login, with their bracelets
+  // The members saved on this account come back after login, with their bracelets and open reports.
+  // A report whose member is gone, or an older second report for the same member, is closed:
+  // otherwise volunteers keep searching for a bracelet that may now be on someone else.
   useEffect(() => {
-    loadMembers()
-      .then((list) => {
-        for (const m of list) if (m.braceletId) tracks[m.braceletId] = tracks[m.braceletId] ?? newTrack();
-        setMembers(list.map(fromDoc));
-        if (list.length) setEditing(null);
-      })
-      .catch(() => {});
+    (async () => {
+      const list = await loadMembers();
+      for (const m of list) if (m.braceletId) tracks[m.braceletId] = tracks[m.braceletId] ?? newTrack();
+      setMembers(list.map(fromDoc));
+      if (list.length) setEditing(null);
+
+      const open: Record<string, Report> = {};
+      for (const r of await loadMyOpenReports()) {
+        // Older reports carry no memberId: match them by bracelet
+        const m = list.find((x) => x.id === r.memberId) ?? list.find((x) => !r.memberId && !!r.braceletId && x.braceletId === r.braceletId);
+        if (m && !open[m.id]) open[m.id] = r; // newest first, so a later match is an older duplicate
+        else closeReport(r.id, 'found').catch(() => {});
+      }
+      setReports(open);
+      for (const [memberId, r] of Object.entries(open))
+        getReportContact(r.id)
+          .then(({ code }) => code && setCodes((o) => ({ ...o, [memberId]: code })))
+          .catch(() => {});
+    })().catch(() => {});
   }, []);
 
   const save = (m: FamMember) =>
     saveMember(toDoc(m)).catch(() => {
-      failed('تعذر حفظ البيانات');
+      failed(tr('تعذر حفظ البيانات', 'Couldn’t save'));
       return m.id;
     });
 
@@ -425,7 +453,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         setLinkFor(id); // next step: link a bracelet to the new member
       }
     } catch {
-      failed('تعذر حفظ البيانات');
+      failed(tr('تعذر حفظ البيانات', 'Couldn’t save'));
     } finally {
       setSaving(false);
     }
@@ -444,14 +472,29 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     };
   });
 
+  // Also closes the member's open report: once released, the bracelet can go to another family,
+  // and volunteers must not keep searching for it under this member's name
   const unlink = (m: FamMember) => {
     if (!m.mac) return Promise.resolve();
     const mac = m.mac;
+    const r = reports[m.id];
     forget(mac);
     const free = { ...m, mac: null };
     setMembers((list) => list.map((x) => (x.id === m.id ? free : x)));
-    return Promise.allSettled([releaseBracelet(mac), save(free)]);
+    if (r) setReports(({ [m.id]: _, ...rest }) => rest);
+    return Promise.allSettled([releaseBracelet(mac), save(free), r && closeReport(r.id, 'found')]);
   };
+  const askUnlink = (m: FamMember) =>
+    reports[m.id]
+      ? Alert.alert(
+          tr('فك السوار؟', 'Unlink the bracelet?'),
+          tr(`بينقفل بلاغ ${m.name} المفتوح، لأن المتطوعين يدورون بهالسوار.`, `${m.name}'s open report will be closed, because volunteers search by this bracelet.`),
+          [
+            { text: tr('إلغاء', 'Cancel'), style: 'cancel' },
+            { text: tr('فك السوار', 'Unlink'), style: 'destructive', onPress: () => unlink(m) },
+          ],
+        )
+      : unlink(m);
 
   // Follow the open reports live: a volunteer takes one, or closes it
   const openIds = Object.entries(reports)
@@ -470,7 +513,11 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         addLog('FOUND', r.member.name);
       });
     });
-    return () => stops.forEach((stop) => stop());
+    const seenStops = openIds.split(',').map((pair) => {
+      const [memberId, reportId] = pair.split(':');
+      return subscribeLastSeen(reportId, (x) => setSeen((o) => ({ ...o, [memberId]: x })));
+    });
+    return () => [...stops, ...seenStops].forEach((stop) => stop());
   }, [openIds]);
 
   // Volunteers near the bracelet pick it up from Firestore
@@ -479,6 +526,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     const r = {
       type,
       braceletId: m.mac ?? '',
+      memberId: m.id,
       member: { name: m.name, kind: m.kind, age: Number(m.age) || 0, gender: m.gender, language: m.language },
       photo,
       description,
@@ -498,7 +546,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
       setJustFound(null);
       addLog('REPORT', m.name);
     } catch {
-      failed('تعذر إرسال البلاغ');
+      failed(tr('تعذر إرسال البلاغ', 'Couldn’t send the report'));
     }
   };
   // Called from the scan timer, so it reads this render's members and reports through a ref.
@@ -514,13 +562,13 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   // Closing also deletes the photo, health and phone; the live report then shows "found"
   const confirmFound = (memberId: string) => {
     const r = reports[memberId];
-    if (r) closeReport(r.id, 'found').catch(() => failed('تعذر إغلاق البلاغ'));
+    if (r) closeReport(r.id, 'found').catch(() => failed(tr('تعذر إغلاق البلاغ', 'Couldn’t close the report')));
   };
 
   // Linking starts here: the bracelet is linked only after the press check passes
   const startPair = (memberId: string, mac: string) => {
     const other = members.find((m) => m.mac === mac && m.id !== memberId);
-    if (other) return Alert.alert('السوار مربوط', `هذا السوار مربوط بـ${other.name}، فكّه منه أول.`);
+    if (other) return Alert.alert(tr('السوار مربوط', 'Bracelet already linked'), tr(`هذا السوار مربوط بـ${other.name}، فكّه منه أول.`, `This bracelet is linked to ${other.name}, unlink it first.`));
     pairing.current = { memberId, p: newPairing(mac, now) };
     setPairView({ memberId, mac, heard: false, near: false, timedOut: false });
     setTypedMac('');
@@ -543,16 +591,20 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     return done;
   };
   const removeMember = (m: FamMember) =>
-    Alert.alert(`حذف ${m.name}؟`, 'بتنحذف بياناته وحالته الصحية، وينفك ربط السوار، وينقفل أي بلاغ مفتوح.', [
-      { text: 'إلغاء', style: 'cancel' },
-      { text: 'حذف', style: 'destructive', onPress: () => clearMember(m) },
-    ]);
+    Alert.alert(
+      tr(`حذف ${m.name}؟`, `Delete ${m.name}?`),
+      tr('بتنحذف بياناته وحالته الصحية، وينفك ربط السوار، وينقفل أي بلاغ مفتوح.', 'Their details and health info are deleted, the bracelet is unlinked and any open report is closed.'),
+      [
+        { text: tr('إلغاء', 'Cancel'), style: 'cancel' },
+        { text: tr('حذف', 'Delete'), style: 'destructive', onPress: () => clearMember(m) },
+      ],
+    );
   // Leaving the event: nothing about the family stays behind, and the bracelets are free for the next visitors
   const endVisit = () =>
-    Alert.alert('إنهاء الزيارة؟', 'بتنحذف كل بيانات العائلة والحالة الصحية، وتنفك كل الأساور، وتطلع من حسابك.', [
-      { text: 'إلغاء', style: 'cancel' },
+    Alert.alert(tr('إنهاء الزيارة؟', 'End visit?'), tr('بتنحذف كل بيانات العائلة والحالة الصحية، وتنفك كل الأساور، وتطلع من حسابك.', 'All family details and health info are deleted, every bracelet is unlinked and you’re signed out.'), [
+      { text: tr('إلغاء', 'Cancel'), style: 'cancel' },
       {
-        text: 'إنهاء الزيارة',
+        text: tr('إنهاء الزيارة', 'End visit'),
         style: 'destructive',
         onPress: async () => {
           await Promise.allSettled(members.map(clearMember));
@@ -617,7 +669,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
           })}
         </MapView>
       ) : (
-        <Text style={s.mapWait}>جاري تحديد موقعك...</Text>
+        <Text style={s.mapWait}>{tr('جاري تحديد موقعك...', 'Finding your location...')}</Text>
       )}
     </View>
   );
@@ -639,40 +691,40 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     );
     return (
       <View style={[ui.card, { marginBottom: 14 }]}>
-        <Text style={s.formTitle}>{old ? `تعديل بيانات ${old.name}` : 'أضف فردًا من العائلة'}</Text>
+        <Text style={s.formTitle}>{old ? tr(`تعديل بيانات ${old.name}`, `Edit ${old.name}`) : tr('أضف فردًا من العائلة', 'Add a family member')}</Text>
 
-        <Text style={s.label}>الاسم</Text>
+        <Text style={s.label}>{tr('الاسم', 'Name')}</Text>
         <TextInput
           style={s.input}
           value={draft.name}
           onChangeText={(name) => setDraft({ ...draft, name })}
-          placeholder="مثلًا: سنا"
+          placeholder={tr('مثلًا: سنا', 'e.g. Sana')}
           placeholderTextColor={C.faint}
           textAlign="right"
         />
 
-        <Text style={s.label}>النوع</Text>
+        <Text style={s.label}>{tr('النوع', 'Type')}</Text>
         {chips({ child: KIND_UI.child.label, elder: KIND_UI.elder.label }, draft.kind, (kind) => setDraft({ ...draft, kind }))}
 
-        <Text style={s.label}>الجنس</Text>
+        <Text style={s.label}>{tr('الجنس', 'Gender')}</Text>
         {chips(GENDER_UI, draft.gender, (gender) => setDraft({ ...draft, gender }))}
 
-        <Text style={s.label}>العمر</Text>
+        <Text style={s.label}>{tr('العمر', 'Age')}</Text>
         <TextInput
           style={s.input}
           value={draft.age}
           onChangeText={(age) => setDraft({ ...draft, age: latinDigits(age).slice(0, 3) })}
-          placeholder={draft.kind === 'child' ? `من 0 إلى ${MAX_AGE.child}` : `حتى ${MAX_AGE.elder}`}
+          placeholder={draft.kind === 'child' ? tr(`من 0 إلى ${MAX_AGE.child}`, `0 to ${MAX_AGE.child}`) : tr(`حتى ${MAX_AGE.elder}`, `up to ${MAX_AGE.elder}`)}
           placeholderTextColor={C.faint}
           keyboardType="number-pad"
           textAlign="right"
         />
 
-        <Text style={s.label}>لغته</Text>
+        <Text style={s.label}>{tr('لغته', 'Their language')}</Text>
         <LanguagePicker selected={[draft.language]} onPick={(language) => setDraft({ ...draft, language })} />
-        <Text style={[s.hint, { marginTop: 6 }]}>المتطوع اللي يتكلم لغته يوصله البلاغ أول</Text>
+        <Text style={[s.hint, { marginTop: 6 }]}>{tr('المتطوع اللي يتكلم لغته يوصله البلاغ أول', 'A volunteer who speaks their language gets the report first')}</Text>
 
-        <Text style={s.label}>{draft.kind === 'child' ? 'رقم جوال ولي الأمر' : 'رقم جوال للتواصل (اختياري)'}</Text>
+        <Text style={s.label}>{draft.kind === 'child' ? tr('رقم جوال ولي الأمر', 'Guardian’s phone') : tr('رقم جوال للتواصل (اختياري)', 'Contact phone (optional)')}</Text>
         <TextInput
           style={s.input}
           value={draft.phone}
@@ -682,37 +734,37 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
           keyboardType="phone-pad"
           textAlign="right"
         />
-        <Text style={[s.hint, { marginTop: 6 }]}>يشوفه المتطوع اللي يستلم البلاغ بس، عشان يتواصل معكم مباشرة</Text>
+        <Text style={[s.hint, { marginTop: 6 }]}>{tr('يشوفه المتطوع اللي يستلم البلاغ بس، عشان يتواصل معكم مباشرة', 'Only the volunteer who takes the report sees it, to reach you directly')}</Text>
 
-        <Text style={s.label}>كيف يتعرف عليه المتطوع؟ (اختياري)</Text>
+        <Text style={s.label}>{tr('كيف يتعرف عليه المتطوع؟ (اختياري)', 'How can a volunteer recognise them? (optional)')}</Text>
         <TextInput
           style={[s.input, { minHeight: 70 }]}
           value={draft.description}
           onChangeText={(description) => setDraft({ ...draft, description })}
-          placeholder="مثلًا: ثوب أبيض وشماغ أحمر، يمشي بعكاز"
+          placeholder={tr('مثلًا: ثوب أبيض وشماغ أحمر، يمشي بعكاز', 'e.g. white thobe, red shemagh, walks with a cane')}
           placeholderTextColor={C.faint}
           multiline
           textAlign="right"
           textAlignVertical="top"
         />
 
-        <Text style={s.label}>حالة صحية (اختياري)</Text>
+        <Text style={s.label}>{tr('حالة صحية (اختياري)', 'Health condition (optional)')}</Text>
         <TextInput
           style={s.input}
           value={draft.condition}
           onChangeText={(condition) => setDraft({ ...draft, condition })}
-          placeholder="مثلًا: ربو، سكري"
+          placeholder={tr('مثلًا: ربو، سكري', 'e.g. asthma, diabetes')}
           placeholderTextColor={C.faint}
           textAlign="right"
         />
         {!!draft.condition.trim() && (
           <>
-            <Text style={s.label}>وش لازم يسوي المتطوع؟</Text>
+            <Text style={s.label}>{tr('وش لازم يسوي المتطوع؟', 'What should the volunteer do?')}</Text>
             <TextInput
               style={[s.input, { minHeight: 70 }]}
               value={draft.notes}
               onChangeText={(notes) => setDraft({ ...draft, notes })}
-              placeholder="مثلًا: البخاخ في الجيب الأمامي لشنطته"
+              placeholder={tr('مثلًا: البخاخ في الجيب الأمامي لشنطته', 'e.g. inhaler in the front pocket of their bag')}
               placeholderTextColor={C.faint}
               multiline
               textAlign="right"
@@ -720,11 +772,11 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
             />
           </>
         )}
-        <Text style={[s.hint, { marginTop: 6 }]}>تظهر لمتطوع واحد بس وقت البلاغ، وتنحذف لما ينقفل</Text>
+        <Text style={[s.hint, { marginTop: 6 }]}>{tr('تظهر لمتطوع واحد بس وقت البلاغ، وتنحذف لما ينقفل', 'Shown to one volunteer only during a report, deleted when it closes')}</Text>
 
         {!!draftError && !!draft.name.trim() && <Text style={s.formError}>{draftError}</Text>}
-        <Button label={saving ? 'جارٍ الحفظ…' : 'حفظ'} onPress={saveDraft} disabled={!!draftError || saving} style={{ marginTop: 12 }} />
-        {members.length > 0 && <Button label="إلغاء" kind="ghost" onPress={() => setEditing(null)} style={{ marginTop: 10 }} />}
+        <Button label={saving ? tr('جارٍ الحفظ…', 'Saving…') : tr('حفظ', 'Save')} onPress={saveDraft} disabled={!!draftError || saving} style={{ marginTop: 12 }} />
+        {members.length > 0 && <Button label={tr('إلغاء', 'Cancel')} kind="ghost" onPress={() => setEditing(null)} style={{ marginTop: 10 }} />}
       </View>
     );
   };
@@ -734,36 +786,36 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     if (pv)
       return (
         <View style={s.linkPanel}>
-          <Text style={s.formTitle}>تأكيد سوار {m.name}</Text>
-          <Text style={s.hint}>عشان نتأكد إن السوار بيدك أنتِ، مو سوار شخص ثاني قريب منك</Text>
+          <Text style={s.formTitle}>{tr(`تأكيد سوار ${m.name}`, `Confirm ${m.name}’s bracelet`)}</Text>
+          <Text style={s.hint}>{tr('عشان نتأكد إن السوار بيدك أنتِ، مو سوار شخص ثاني قريب منك', 'So we know the bracelet is in your hand, not someone else’s nearby')}</Text>
           <Text style={[s.nearMac, { textAlign: 'center', marginVertical: 8 }]}>{pv.mac}</Text>
 
           <View style={s.stepRow}>
             <Ionicons name={pv.near ? 'checkmark-circle' : 'ellipse-outline'} size={20} color={pv.near ? C.safe : C.faint} />
-            <Text style={s.stepText}>١. لصّقي السوار بالجوال</Text>
+            <Text style={s.stepText}>{tr('١. لصّقي السوار بالجوال', '1. Hold the bracelet against the phone')}</Text>
           </View>
           <View style={s.stepRow}>
             <Ionicons name="ellipse-outline" size={20} color={C.faint} />
-            <Text style={s.stepText}>٢. اضغطي زر السوار ضغطتين وهو ملاصق (بيصفّر، هذا طبيعي)</Text>
+            <Text style={s.stepText}>{tr('٢. اضغطي زر السوار ضغطتين وهو ملاصق (بيصفّر، هذا طبيعي)', '2. Press the bracelet button twice while touching (it beeps, that’s normal)')}</Text>
           </View>
 
-          {!pv.heard && <Text style={s.empty}>ما نسمع هذا السوار حاليًا، تأكدي من الرقم</Text>}
+          {!pv.heard && <Text style={s.empty}>{tr('ما نسمع هذا السوار حاليًا، تأكدي من الرقم', 'We can’t hear this bracelet right now, check the number')}</Text>}
           {pv.timedOut && (
             <Banner
               tone="warn"
               icon="alert-circle-outline"
-              text="ما وصلنا ضغط من هذا السوار وهو ملاصق. تأكدي إنه نفس السوار اللي بيدك واضغطي مرة ثانية"
+              text={tr('ما وصلنا ضغط من هذا السوار وهو ملاصق. تأكدي إنه نفس السوار اللي بيدك واضغطي مرة ثانية', 'No press reached us from this bracelet while touching. Check it’s the one in your hand and press again')}
             />
           )}
-          <Button label="إلغاء" kind="ghost" onPress={cancelPair} style={{ marginTop: 12 }} />
+          <Button label={tr('إلغاء', 'Cancel')} kind="ghost" onPress={cancelPair} style={{ marginTop: 12 }} />
         </View>
       );
     return (
       <View style={s.linkPanel}>
-        <Text style={s.formTitle}>ربط سوار {m.name}</Text>
-        <Text style={s.hint}>لصّقي السوار بالجوال، وبيطلع أول القائمة</Text>
+        <Text style={s.formTitle}>{tr(`ربط سوار ${m.name}`, `Link ${m.name}’s bracelet`)}</Text>
+        <Text style={s.hint}>{tr('لصّقي السوار بالجوال، وبيطلع أول القائمة', 'Hold the bracelet against the phone and it shows first')}</Text>
 
-        {nearbyList.length === 0 && <Text style={s.empty}>جاري البحث عن أساور قريبة...</Text>}
+        {nearbyList.length === 0 && <Text style={s.empty}>{tr('جاري البحث عن أساور قريبة...', 'Looking for nearby bracelets...')}</Text>}
         {nearbyList.map(([mac, v], i) => {
           const owner = members.find((x) => x.mac === mac);
           return (
@@ -771,19 +823,19 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
               <View style={{ flex: 1 }}>
                 <Text style={s.nearMac}>{mac}</Text>
                 <Text style={s.nearSub}>
-                  {owner ? `مربوط بـ${owner.name}` : i === 0 ? 'الأقرب' : 'قريب'} · الإشارة {v.rssi}
+                  {owner ? tr(`مربوط بـ${owner.name}`, `Linked to ${owner.name}`) : i === 0 ? tr('الأقرب', 'Closest') : tr('قريب', 'Nearby')} · {tr('الإشارة', 'signal')} {v.rssi}
                 </Text>
               </View>
               {!owner && (
                 <Pressable style={s.linkBtn} onPress={() => startPair(m.id, mac)}>
-                  <Text style={s.linkText}>ربط</Text>
+                  <Text style={s.linkText}>{tr('ربط', 'Link')}</Text>
                 </Pressable>
               )}
             </View>
           );
         })}
 
-        <Text style={s.label}>أو اكتبي الرقم المطبوع ورا السوار</Text>
+        <Text style={s.label}>{tr('أو اكتبي الرقم المطبوع ورا السوار', 'Or type the number printed on the back')}</Text>
         <View style={s.typedRow}>
           <TextInput
             style={[s.input, { flex: 1 }]}
@@ -799,13 +851,19 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
             style={[s.linkBtn, typedMac.length !== 12 && { opacity: 0.4 }]}
             onPress={() => typedMac.length === 12 && startPair(m.id, typedMac)}
           >
-            <Text style={s.linkText}>ربط</Text>
+            <Text style={s.linkText}>{tr('ربط', 'Link')}</Text>
           </Pressable>
         </View>
-        <Button label="لاحقًا" kind="ghost" onPress={() => setLinkFor(null)} style={{ marginTop: 10 }} />
+        <Button label={tr('لاحقًا', 'Later')} kind="ghost" onPress={() => setLinkFor(null)} style={{ marginTop: 10 }} />
       </View>
     );
   };
+
+  const formOpen = !screen && tab === 'home' && !!editing;
+  // A new page starts at the top, wherever the list was scrolled to
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [formOpen]);
 
   const renderMember = (m: FamMember) => {
     const l = liveOf(m);
@@ -818,13 +876,13 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     const edge = !!l?.edge;
     const warn = zone === 'MEDIUM' || zone === 'FAR' || lost || edge;
     const report = reports[m.id];
-    const role = [KIND_UI[m.kind].label, GENDER_UI[m.gender], m.age && `${m.age} سنة`, LANGUAGES[m.language]].filter(Boolean).join(' · ');
+    const role = [KIND_UI[m.kind].label, GENDER_UI[m.gender], m.age && tr(`${m.age} سنة`, `${m.age} yrs`), langName(m.language)].filter(Boolean).join(' · ');
 
     return (
       <View key={m.id} style={[ui.card, { marginBottom: 14 }, warn && { borderColor: lost || zone === 'FAR' || edge ? C.dangerBorder : C.warnBorder }]}>
-        {edge && <Banner tone="danger" icon="exit-outline" text={`${m.name} قريب من حدود الفعالية أو خارجها`} onPress={() => setTab('map')} />}
-        {(zone === 'MEDIUM' || zone === 'FAR') && <Banner tone="warn" icon="warning-outline" text={`الإشارة تضعف، ${m.name} يبتعد عنك`} />}
-        {lost && <Banner tone="danger" icon="close-circle-outline" text={`انقطعت الإشارة عن سوار ${m.name}`} />}
+        {edge && <Banner tone="danger" icon="exit-outline" text={tr(`${m.name} قريب من حدود الفعالية أو خارجها`, `${m.name} is near or past the event edge`)} onPress={() => setTab('map')} />}
+        {(zone === 'MEDIUM' || zone === 'FAR') && <Banner tone="warn" icon="warning-outline" text={tr(`الإشارة تضعف، ${m.name} يبتعد عنك`, `Signal weakening, ${m.name} is moving away`)} />}
+        {lost && <Banner tone="danger" icon="close-circle-outline" text={tr(`انقطعت الإشارة عن سوار ${m.name}`, `Lost signal from ${m.name}’s bracelet`)} />}
 
         <View style={s.memberRow}>
           <View style={[s.avatar, { backgroundColor: KIND_UI[m.kind].color }]}>
@@ -860,19 +918,19 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
               <View style={s.meta}>
                 <View style={[ui.dot, { backgroundColor: zoneUi?.color ?? C.faint }]} />
                 <Text style={[s.metaText, { color: zoneUi?.color ?? C.faint, fontWeight: '600' }]}>
-                  {zoneUi?.label ?? (m.mac ? 'جاري البحث عن السوار...' : 'لم يُربط سوار بعد')}
+                  {zoneUi?.label ?? (m.mac ? tr('جاري البحث عن السوار...', 'Looking for the bracelet...') : tr('لم يُربط سوار بعد', 'No bracelet linked yet'))}
                 </Text>
               </View>
               {reading && (
                 <View style={s.meta}>
                   <Ionicons name="time-outline" size={12} color={C.faint} />
-                  <Text style={s.metaText}>{ago < 3 ? 'الآن' : `قبل ${ago} ث`}</Text>
+                  <Text style={s.metaText}>{ago < 3 ? tr('الآن', 'now') : tr(`قبل ${ago} ث`, `${ago}s ago`)}</Text>
                 </View>
               )}
             </View>
             {reading && !lost && (
               <Text style={s.trend}>
-                {TREND_UI[reading.trend]} · ضمن {l?.radius} متر تقريبًا
+                {TREND_UI[reading.trend]} · {tr(`ضمن ${l?.radius} متر تقريبًا`, `within about ${l?.radius} m`)}
               </Text>
             )}
           </View>
@@ -880,23 +938,39 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
 
         {/* Lost child: report it, or close the open report */}
         {m.kind === 'child' && !report && (
-          <Button label={`${m.name} ضائع`} icon="search" kind="danger" onPress={() => setScreen({ kind: 'lost', memberId: m.id })} style={{ marginTop: 14 }} />
+          <Button label={tr(`${m.name} ضائع`, `${m.name} is lost`)} icon="search" kind="danger" onPress={() => setScreen({ kind: 'lost', memberId: m.id })} style={{ marginTop: 14 }} />
         )}
         {report && (
           <View style={{ marginTop: 14 }}>
             <Banner
               tone="danger"
               icon="megaphone-outline"
-              text={report.status === 'searching' ? 'متطوع استلم البلاغ ويدور الحين' : 'البلاغ وصل للمتطوعين القريبين، ننتظر أحد يستلمه'}
+              text={
+                report.status === 'searching'
+                  ? tr('متطوع استلم البلاغ ويدور الحين', 'A volunteer took the report and is searching now')
+                  : tr('البلاغ وصل للمتطوعين القريبين، ننتظر أحد يستلمه', 'Report sent to nearby volunteers, waiting for someone to take it')
+              }
             />
+            {seen[m.id] && (() => {
+              const s = seen[m.id]!;
+              const min = Math.max(0, Math.floor((now - s.at) / 60_000));
+              const where = s.area || tr('قرب متطوع', 'near a volunteer');
+              const when = min < 1 ? tr('الآن', 'just now') : tr(`قبل ${min} د`, `${min} min ago`);
+              return <Banner tone="info" icon="location-outline" text={tr(`آخر إشارة للسوار: ${where} · ${when}`, `Bracelet last heard: ${where} · ${when}`)} />;
+            })()}
             {codes[m.id] && (
               <View style={s.codeBox}>
-                <Text style={s.codeLabel}>رمز التسليم</Text>
+                <Text style={s.codeLabel}>{tr('رمز التسليم', 'Handover code')}</Text>
                 <Text style={s.code}>{codes[m.id]}</Text>
-                <Text style={s.codeHint}>قوله للمتطوع بس لما يسلّمك {m.name}. ما يسلّمه لأحد بدون هالرمز</Text>
+                <Text style={s.codeHint}>
+                  {tr(
+                    `قوله للمتطوع بس لما يسلّمك ${m.name}. ما يسلّمه لأحد بدون هالرمز`,
+                    `Tell the volunteer only when they hand ${m.name} to you. They won’t hand over without it`,
+                  )}
+                </Text>
               </View>
             )}
-            <Button label="لقيناه" icon="checkmark-circle-outline" onPress={() => setScreen({ kind: 'found', memberId: m.id })} />
+            <Button label={tr('لقيناه', 'We found them')} icon="checkmark-circle-outline" onPress={() => setScreen({ kind: 'found', memberId: m.id })} />
           </View>
         )}
 
@@ -905,10 +979,10 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         {/* Technical details for the demo */}
         {m.mac && (
           <View style={s.techCard}>
-            <Text style={s.techText}>رقم السوار: {m.mac}</Text>
+            <Text style={s.techText}>{tr(`رقم السوار: ${m.mac}`, `Bracelet: ${m.mac}`)}</Text>
             {reading && (
               <Text style={s.techText}>
-                الإشارة الآن {reading.rssi} · المتوسط {reading.smooth}
+                {tr(`الإشارة الآن ${reading.rssi} · المتوسط ${reading.smooth}`, `Signal now ${reading.rssi} · average ${reading.smooth}`)}
               </Text>
             )}
           </View>
@@ -924,24 +998,24 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
             }}
           >
             <Ionicons name="create-outline" size={15} color={C.accent} />
-            <Text style={[s.smallBtnText, { color: C.accent }]}>تعديل</Text>
+            <Text style={[s.smallBtnText, { color: C.accent }]}>{tr('تعديل', 'Edit')}</Text>
           </Pressable>
           {m.mac ? (
-            <Pressable style={s.smallBtn} hitSlop={6} onPress={() => unlink(m)}>
+            <Pressable style={s.smallBtn} hitSlop={6} onPress={() => askUnlink(m)}>
               <Ionicons name="unlink-outline" size={15} color={C.accent} />
-              <Text style={[s.smallBtnText, { color: C.accent }]}>فك السوار</Text>
+              <Text style={[s.smallBtnText, { color: C.accent }]}>{tr('فك السوار', 'Unlink')}</Text>
             </Pressable>
           ) : (
             linkFor !== m.id && (
               <Pressable style={s.smallBtn} hitSlop={6} onPress={() => setLinkFor(m.id)}>
                 <Ionicons name="link-outline" size={15} color={C.accent} />
-                <Text style={[s.smallBtnText, { color: C.accent }]}>ربط سوار</Text>
+                <Text style={[s.smallBtnText, { color: C.accent }]}>{tr('ربط سوار', 'Link bracelet')}</Text>
               </Pressable>
             )
           )}
           <Pressable style={s.smallBtn} hitSlop={6} onPress={() => removeMember(m)}>
             <Ionicons name="trash-outline" size={15} color={C.danger} />
-            <Text style={[s.smallBtnText, { color: C.danger }]}>حذف</Text>
+            <Text style={[s.smallBtnText, { color: C.danger }]}>{tr('حذف', 'Delete')}</Text>
           </Pressable>
         </View>
       </View>
@@ -951,43 +1025,52 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   return (
     <View style={s.screen}>
       <Header
-        sub="نسيج"
-        title="عائلتي"
+        sub={tr('نسيج', 'Nasij')}
+        title={tr('عائلتي', 'My family')}
         actions={
           <>
-            <HeaderButton icon="notifications-outline" label="التنبيهات" badge={log.length} onPress={() => setTab('alerts')} />
-            <HeaderButton icon="swap-horizontal" label="تبديل إلى متطوع" onPress={onSwitchRole} />
-            <HeaderButton icon="exit-outline" label="إنهاء الزيارة" onPress={endVisit} />
+            <HeaderButton icon="notifications-outline" label={tr('التنبيهات', 'Alerts')} badge={log.length} onPress={() => setTab('alerts')} />
+            <HeaderButton icon="swap-horizontal" label={tr('تبديل إلى متطوع', 'Switch to volunteer')} onPress={onSwitchRole} />
+            <HeaderButton icon="exit-outline" label={tr('إنهاء الزيارة', 'End visit')} onPress={endVisit} />
           </>
         }
       >
         <Pill
           dot={activeCount ? C.mint : C.faint}
-          text={activeCount === 0 ? 'لا يوجد سوار نشط' : activeCount === 1 ? 'سوار واحد نشط' : `${activeCount} أساور نشطة`}
+          text={
+            activeCount === 0
+              ? tr('لا يوجد سوار نشط', 'No active bracelet')
+              : activeCount === 1
+                ? tr('سوار واحد نشط', '1 active bracelet')
+                : tr(`${activeCount} أساور نشطة`, `${activeCount} active bracelets`)
+          }
         />
-        {openCount > 0 && <Pill alert icon="megaphone-outline" text={openCount === 1 ? 'بلاغ مفتوح' : `${openCount} بلاغات مفتوحة`} />}
-        {(warnAny || !!sos) && !openCount && <Pill alert icon="warning-outline" text="تنبيه" />}
+        {openCount > 0 && <Pill alert icon="megaphone-outline" text={openCount === 1 ? tr('بلاغ مفتوح', '1 open report') : tr(`${openCount} بلاغات مفتوحة`, `${openCount} open reports`)} />}
+        {(warnAny || !!sos) && !openCount && <Pill alert icon="warning-outline" text={tr('تنبيه', 'Alert')} />}
       </Header>
 
-      <ScrollView contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
+      <ScrollView ref={scrollRef} contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
         {/* Emergency */}
         {!!sos && (
-          <View style={s.sos}>
+          <FadeIn style={s.sos}>
             <View style={s.sosIcon}>
               <Ionicons name="alert" size={30} color={C.danger} />
             </View>
-            <Text style={s.sosTitle}>{sos.kind === 'FALL' ? 'احتمال سقوط' : 'طلب مساعدة'}</Text>
+            <Text style={s.sosTitle}>{sos.kind === 'FALL' ? tr('احتمال سقوط', 'Possible fall') : tr('طلب مساعدة', 'Help request')}</Text>
             <Text style={s.sosText}>
-              {sos.kind === 'FALL' ? `${sos.who} ما تحرك من فترة، تأكدوا منه` : `${sos.who} ضغط زر الطوارئ في السوار`}
+              {sos.kind === 'FALL'
+                ? tr(`${sos.who} ما تحرك من فترة، تأكدوا منه`, `${sos.who} hasn’t moved for a while, check on them`)
+                : tr(`${sos.who} ضغط زر الطوارئ في السوار`, `${sos.who} pressed the bracelet’s emergency button`)}
             </Text>
             <Pressable style={s.sosBtn} onPress={dismissSos}>
-              <Text style={s.sosBtnText}>تم الاستلام</Text>
+              <Text style={s.sosBtnText}>{tr('تم الاستلام', 'Got it')}</Text>
             </Pressable>
-          </View>
+          </FadeIn>
         )}
 
-        {btOff && <Banner tone="danger" icon="bluetooth" text="شغّلي البلوتوث عشان نتابع الأساور" />}
+        {btOff && <Banner tone="danger" icon="bluetooth" text={tr('شغّلي البلوتوث عشان نتابع الأساور', 'Turn on Bluetooth so we can track the bracelets')} />}
 
+        <FadeIn key={screen?.kind ?? (formOpen ? 'form' : tab)}>
         {screen?.kind === 'lost' && screenMember && (
           <LostScreen
             name={screenMember.name}
@@ -1000,45 +1083,55 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
           <FoundScreen name={screenMember.name} onConfirm={() => confirmFound(screenMember.id)} onCancel={() => setScreen(null)} />
         )}
 
-        {!screen && tab === 'home' && (
+        {/* Adding or editing a member is its own page, not a card inside the list */}
+        {formOpen && (
           <>
-            <Text style={ui.sectionTitle}>أفراد العائلة</Text>
+            {members.length > 0 && (
+              <Pressable style={s.back} hitSlop={8} onPress={() => setEditing(null)}>
+                <Ionicons name={isEn() ? 'arrow-back' : 'arrow-forward'} size={18} color={C.accent} />
+                <Text style={s.backText}>{tr('أفراد العائلة', 'Family members')}</Text>
+              </Pressable>
+            )}
+            {renderForm()}
+          </>
+        )}
+
+        {!screen && tab === 'home' && !editing && (
+          <>
+            <Text style={ui.sectionTitle}>{tr('أفراد العائلة', 'Family members')}</Text>
 
             {justFound && (
               <Banner
                 tone="safe"
                 icon="checkmark-circle"
-                text={`الحمد لله على سلامة ${justFound}، انقفل البلاغ وانحذفت بياناته`}
+                text={tr(`الحمد لله على سلامة ${justFound}، انقفل البلاغ وانحذفت بياناته`, `So glad ${justFound} is safe. The report is closed and their details deleted`)}
                 onPress={() => setJustFound(null)}
               />
             )}
 
-            {editing && renderForm()}
             {members.map(renderMember)}
 
-            {!editing && (
-              <Button
-                label="أضف فردًا آخر"
-                icon="person-add-outline"
-                kind="ghost"
-                onPress={() => {
-                  setDraft({ ...EMPTY, phone: profile.phone });
-                  setEditing('new');
-                }}
-                style={{ marginBottom: 14 }}
-              />
-            )}
+            <Button
+              label={tr('أضف فردًا آخر', 'Add another member')}
+              icon="person-add-outline"
+              kind="ghost"
+              onPress={() => {
+                setDraft({ ...EMPTY, phone: profile.phone });
+                setEditing('new');
+              }}
+              style={{ marginBottom: 14 }}
+            />
 
             {/* Quick actions */}
-            <Text style={ui.caption}>إجراءات سريعة</Text>
+            <Text style={ui.caption}>{tr('إجراءات سريعة', 'Quick actions')}</Text>
             <View style={s.actions}>
               <Pressable style={s.action} onPress={() => setTab('map')}>
                 <Ionicons name="location-outline" size={18} color={C.primary} />
-                <Text style={s.actionText}>خريطة العائلة</Text>
+                <Text style={s.actionText}>{tr('خريطة العائلة', 'Family map')}</Text>
               </Pressable>
               <Pressable style={s.action} onPress={() => setTab('alerts')}>
                 <Ionicons name="notifications-outline" size={18} color={C.danger} />
-                <Text style={s.actionText}>سجل التنبيهات</Text>
+                <Text style={s.actionText}>{tr('سجل التنبيهات', 'Alert log')}</Text>
               </Pressable>
             </View>
           </>
@@ -1046,14 +1139,16 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
 
         {!screen && tab === 'map' && (
           <>
-            <Text style={ui.sectionTitle}>خريطة العائلة</Text>
+            <Text style={ui.sectionTitle}>{tr('خريطة العائلة', 'Family map')}</Text>
             {renderMap(420)}
             {members.map((m) => {
               const l = liveOf(m);
               if (!l?.zone) return null;
               return (
                 <Text key={m.id} style={s.mapNote}>
-                  {l.zone === 'LOST' ? `${m.name}: آخر مرة كان ضمن ${l.radius} متر منك تقريبًا` : `${m.name} ضمن ${l.radius} متر منك تقريبًا`}
+                  {l.zone === 'LOST'
+                    ? tr(`${m.name}: آخر مرة كان ضمن ${l.radius} متر منك تقريبًا`, `${m.name}: last seen within about ${l.radius} m of you`)
+                    : tr(`${m.name} ضمن ${l.radius} متر منك تقريبًا`, `${m.name} is within about ${l.radius} m of you`)}
                 </Text>
               );
             })}
@@ -1062,12 +1157,12 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
 
         {!screen && tab === 'profile' && (
           <>
-            <Text style={ui.sectionTitle}>حسابي</Text>
+            <Text style={ui.sectionTitle}>{tr('حسابي', 'My account')}</Text>
             <View style={ui.card}>
-              <Text style={s.label}>البريد الإلكتروني</Text>
+              <Text style={s.label}>{tr('البريد الإلكتروني', 'Email')}</Text>
               <Text style={s.readOnly}>{auth.currentUser?.email ?? ''}</Text>
 
-              <Text style={s.label}>اسمك</Text>
+              <Text style={s.label}>{tr('اسمك', 'Your name')}</Text>
               <TextInput
                 style={s.input}
                 value={profileDraft.name}
@@ -1075,12 +1170,12 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
                   setProfileDraft({ ...profileDraft, name });
                   setProfileSaved(false);
                 }}
-                placeholder="مثلًا: أبو سنا"
+                placeholder={tr('مثلًا: أبو سنا', 'e.g. Sana’s dad')}
                 placeholderTextColor={C.faint}
                 textAlign="right"
               />
 
-              <Text style={s.label}>رقم جوالك</Text>
+              <Text style={s.label}>{tr('رقم جوالك', 'Your phone')}</Text>
               <TextInput
                 style={s.input}
                 value={profileDraft.phone}
@@ -1093,19 +1188,19 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
                 keyboardType="phone-pad"
                 textAlign="right"
               />
-              <Text style={[s.hint, { marginTop: 6 }]}>يتعبّى تلقائيًا للأفراد الجدد، ويوصل للمتطوع المستلم إذا ما للفرد رقم</Text>
+              <Text style={[s.hint, { marginTop: 6 }]}>{tr('يتعبّى تلقائيًا للأفراد الجدد، ويوصل للمتطوع المستلم إذا ما للفرد رقم', 'Filled in for new members, and sent to the volunteer if a member has no number')}</Text>
 
               {!!profileError && !!profileDraft.name.trim() && <Text style={s.formError}>{profileError}</Text>}
-              {profileSaved && <Text style={s.saved}>انحفظت بياناتك</Text>}
-              <Button label="حفظ" onPress={saveMyProfile} disabled={!!profileError} style={{ marginTop: 12 }} />
+              {profileSaved && <Text style={s.saved}>{tr('انحفظت بياناتك', 'Your details are saved')}</Text>}
+              <Button label={tr('حفظ', 'Save')} onPress={saveMyProfile} disabled={!!profileError} style={{ marginTop: 12 }} />
             </View>
           </>
         )}
 
         {!screen && tab === 'alerts' && (
           <>
-            <Text style={ui.sectionTitle}>التنبيهات</Text>
-            {log.length === 0 && <Text style={s.empty}>لا توجد تنبيهات بعد</Text>}
+            <Text style={ui.sectionTitle}>{tr('التنبيهات', 'Alerts')}</Text>
+            {log.length === 0 && <Text style={s.empty}>{tr('لا توجد تنبيهات بعد', 'No alerts yet')}</Text>}
             {log.map((item, i) => (
               <View key={i} style={s.logRow}>
                 <View style={[s.logDot, { backgroundColor: ZONE_UI[item.kind].color }]} />
@@ -1118,19 +1213,21 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
             ))}
           </>
         )}
+        </FadeIn>
       </ScrollView>
 
       <BottomNav
         active={tab}
         onChange={(t) => {
           setTab(t);
+          if (members.length) setEditing(null);
           setScreen(null);
         }}
         tabs={[
-          { key: 'home', label: 'الرئيسية', icon: 'home-outline', dot: openCount > 0 },
-          { key: 'map', label: 'الخريطة', icon: 'map-outline' },
-          { key: 'alerts', label: 'التنبيهات', icon: 'notifications-outline' },
-          { key: 'profile', label: 'حسابي', icon: 'person-circle-outline', dot: !profile.phone },
+          { key: 'home', label: tr('الرئيسية', 'Home'), icon: 'home-outline', dot: openCount > 0 },
+          { key: 'map', label: tr('الخريطة', 'Map'), icon: 'map-outline' },
+          { key: 'alerts', label: tr('التنبيهات', 'Alerts'), icon: 'notifications-outline' },
+          { key: 'profile', label: tr('حسابي', 'Account'), icon: 'person-circle-outline', dot: !profile.phone },
         ]}
       />
     </View>
@@ -1141,13 +1238,15 @@ const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.bg },
   body: { padding: 20, paddingBottom: 110 },
 
+  back: { flexDirection: 'row-reverse', alignItems: 'center', gap: 6, alignSelf: 'flex-end', marginBottom: 12 },
+  backText: { color: C.accent, fontSize: 14, fontWeight: '700' },
   memberRow: { flexDirection: 'row-reverse', gap: 12, alignItems: 'flex-start' },
-  avatar: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
+  avatar: { width: 52, height: 52, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#fff', fontSize: 22, fontWeight: '700' },
   hint: { color: C.muted, fontSize: 12.5, textAlign: 'right', marginBottom: 10 },
   nearRow: {
     flexDirection: 'row-reverse', alignItems: 'center', gap: 10,
-    borderWidth: 1, borderColor: C.border, borderRadius: 12, padding: 10, marginBottom: 8,
+    backgroundColor: C.fill, borderRadius: 14, padding: 12, marginBottom: 8,
   },
   nearMac: { color: C.primary, fontSize: 14, fontWeight: '700', textAlign: 'right', letterSpacing: 0.5 },
   nearSub: { color: C.faint, fontSize: 12, textAlign: 'right', marginTop: 2 },
@@ -1164,15 +1263,12 @@ const s = StyleSheet.create({
   stepText: { flex: 1, color: C.text, fontSize: 13.5, textAlign: 'right' },
   formTitle: { color: C.primary, fontSize: 16, fontWeight: '700', textAlign: 'right', marginBottom: 6 },
   label: { color: C.muted, fontSize: 12, fontWeight: '600', textAlign: 'right', marginTop: 12, marginBottom: 6 },
-  input: {
-    backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#E0DACE', borderRadius: 12,
-    paddingVertical: 12, paddingHorizontal: 14, fontSize: 15, color: C.text,
-  },
+  input: ui.input,
   chips: { flexDirection: 'row-reverse', gap: 10 },
-  chip: { flex: 1, borderWidth: 1.5, borderColor: '#E0DACE', borderRadius: 12, paddingVertical: 11, alignItems: 'center', backgroundColor: '#fff' },
+  chip: { flex: 1, borderWidth: 1.5, borderColor: 'transparent', borderRadius: 14, paddingVertical: 12, alignItems: 'center', backgroundColor: C.fill },
   chipText: { color: C.text, fontSize: 14, fontWeight: '600' },
   nameRow: { flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center' },
-  memberName: { color: C.primary, fontSize: 17, fontWeight: '700', textAlign: 'right' },
+  memberName: { color: C.primary, fontSize: 18, fontWeight: '800', textAlign: 'right' },
   memberRole: { color: C.muted, fontSize: 12.5, textAlign: 'right', marginTop: 2 },
   bars: { flexDirection: 'row', alignItems: 'flex-end', gap: 2 },
   bar: { width: 4, borderRadius: 2 },
@@ -1182,16 +1278,13 @@ const s = StyleSheet.create({
   trend: { color: C.muted, fontSize: 12.5, textAlign: 'right', marginTop: 6 },
 
   actions: { flexDirection: 'row-reverse', gap: 12 },
-  action: {
-    flex: 1, flexDirection: 'row-reverse', alignItems: 'center', gap: 8,
-    backgroundColor: C.card, borderWidth: 1.5, borderColor: C.border, borderRadius: 14, padding: 13,
-  },
+  action: { ...ui.tile, flex: 1, flexDirection: 'row-reverse', alignItems: 'center', gap: 8 },
   actionText: { color: C.primary, fontSize: 13, fontWeight: '600' },
 
-  techCard: { marginTop: 14, padding: 12, borderRadius: 14, backgroundColor: '#EEF5F4' },
-  codeBox: { alignItems: 'center', backgroundColor: '#EEF5F4', borderRadius: 14, padding: 12, marginBottom: 10 },
+  techCard: { marginTop: 14, padding: 12, borderRadius: 16, backgroundColor: '#EEF5F4' },
+  codeBox: { alignItems: 'center', backgroundColor: '#EEF5F4', borderRadius: 18, padding: 14, marginBottom: 10 },
   codeLabel: { color: C.muted, fontSize: 12, fontWeight: '600' },
-  code: { color: C.primary, fontSize: 30, fontWeight: '700', letterSpacing: 8, marginVertical: 2 },
+  code: { color: C.primary, fontSize: 30, fontWeight: '700', letterSpacing: 8, marginVertical: 2, fontVariant: ['tabular-nums'] },
   codeHint: { color: C.muted, fontSize: 12, textAlign: 'center' },
   linkPanel: { marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border },
   readOnly: { color: C.text, fontSize: 15, textAlign: 'right' },
@@ -1200,7 +1293,7 @@ const s = StyleSheet.create({
   techText: { color: C.primary, fontSize: 12, textAlign: 'right', marginBottom: 2 },
 
   sos: {
-    backgroundColor: C.danger, borderRadius: 22, padding: 20, marginBottom: 16, alignItems: 'center',
+    backgroundColor: C.danger, borderRadius: 24, padding: 22, marginBottom: 16, alignItems: 'center',
     shadowColor: C.danger, shadowOpacity: 0.35, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
   },
   sosIcon: {
@@ -1212,19 +1305,16 @@ const s = StyleSheet.create({
   sosBtn: { backgroundColor: '#fff', borderRadius: 14, paddingVertical: 11, paddingHorizontal: 34, marginTop: 14 },
   sosBtnText: { color: C.danger, fontSize: 16, fontWeight: '700' },
 
-  mapBox: { width: '100%', borderRadius: 20, overflow: 'hidden', backgroundColor: '#E5E1D6', justifyContent: 'center', borderWidth: 1.5, borderColor: C.border },
+  mapBox: { width: '100%', borderRadius: 24, overflow: 'hidden', backgroundColor: '#E5E1D6', justifyContent: 'center' },
   mapName: { backgroundColor: '#fff', borderWidth: 1.5, borderRadius: 10, paddingVertical: 2, paddingHorizontal: 8 },
   mapNameText: { fontSize: 12, fontWeight: '700' },
   mapWait: { textAlign: 'center', color: C.muted },
   mapNote: { color: C.muted, fontSize: 14, textAlign: 'center', marginTop: 10 },
 
   empty: { color: C.faint, textAlign: 'center', marginTop: 30 },
-  logRow: {
-    flexDirection: 'row-reverse', alignItems: 'center', gap: 10,
-    backgroundColor: C.card, borderWidth: 1, borderColor: C.border, borderRadius: 14, padding: 13, marginBottom: 8,
-  },
+  logRow: { ...ui.tile, flexDirection: 'row-reverse', alignItems: 'center', gap: 12, marginBottom: 10 },
   logDot: { width: 10, height: 10, borderRadius: 5 },
   logLabel: { flex: 1, fontSize: 14, fontWeight: '600', textAlign: 'right' },
-  logTime: { color: C.faint, fontSize: 12 },
+  logTime: { color: C.faint, fontSize: 12, fontVariant: ['tabular-nums'] },
 
 });

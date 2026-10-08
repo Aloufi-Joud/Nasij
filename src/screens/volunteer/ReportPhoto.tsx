@@ -1,5 +1,6 @@
 // Child's photo from the report, or a coloured initial when there is none
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, View } from 'react-native';
+import { Text } from '../../components/Text';
 import type { Report } from '../../mock';
 import { KIND_UI } from './labels';
 

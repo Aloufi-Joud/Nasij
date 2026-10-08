@@ -1,10 +1,13 @@
 // Proximity: big "approaching / moving away" indicator and signal bars.
 // Readings and direction come from src/ble (useBraceletSignal in VolunteerApp).
 import { useEffect, useState } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, StyleSheet, View } from 'react-native';
+import { Text } from '../../components/Text';
+import { Pressable } from '../../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
 import { C, F, ui } from '../../theme';
+import { tr } from '../../i18n';
 import type { Report } from '../../mock';
 import ReportPhoto from './ReportPhoto';
 import { TYPE_UI, whoLine } from './labels';
@@ -21,9 +24,9 @@ type Props = {
 };
 
 const TREND_VIEW: Record<Trend, { label: string; hint: string; color: string; bg: string; icon: Icon }> = {
-  approaching: { label: 'تقترب منه', hint: 'استمر في نفس الاتجاه', color: C.safe, bg: C.safeBg, icon: 'arrow-up' },
-  away: { label: 'تبتعد عنه', hint: 'ارجع للاتجاه اللي جيت منه', color: C.danger, bg: C.dangerBg, icon: 'arrow-down' },
-  steady: { label: 'المسافة ثابتة', hint: 'جرّب تمشي باتجاه مختلف', color: C.accent, bg: C.techBg, icon: 'remove' },
+  approaching: { get label() { return tr('تقترب منه', 'Getting closer'); }, get hint() { return tr('استمر في نفس الاتجاه', 'Keep going this way'); }, color: C.safe, bg: C.safeBg, icon: 'arrow-up' },
+  away: { get label() { return tr('تبتعد عنه', 'Moving away'); }, get hint() { return tr('ارجع للاتجاه اللي جيت منه', 'Go back the way you came'); }, color: C.danger, bg: C.dangerBg, icon: 'arrow-down' },
+  steady: { get label() { return tr('المسافة ثابتة', 'Distance steady'); }, get hint() { return tr('جرّب تمشي باتجاه مختلف', 'Try a different direction'); }, color: C.accent, bg: C.techBg, icon: 'remove' },
 };
 
 export default function ProximityScreen({ report: r, signal, now, onHealth, onClose }: Props) {
@@ -33,10 +36,10 @@ export default function ProximityScreen({ report: r, signal, now, onHealth, onCl
   const view = heard
     ? TREND_VIEW[signal.trend]
     : {
-        label: lost ? 'انقطعت الإشارة' : 'لم يلتقط جوالك السوار بعد',
-        hint: lost ? 'ارجع لآخر مكان التقطت فيه الإشارة' : `امشِ في المنطقة: ${r.area}`,
+        label: lost ? tr('انقطعت الإشارة', 'Signal lost') : tr('لم يلتقط جوالك السوار بعد', 'Your phone hasn’t picked up the bracelet yet'),
+        hint: lost ? tr('ارجع لآخر مكان التقطت فيه الإشارة', 'Go back to where you last had the signal') : tr(`امشِ في المنطقة: ${r.area}`, `Walk around: ${r.area}`),
         color: lost ? C.danger : C.faint,
-        bg: lost ? C.dangerBg : '#F0EEE6',
+        bg: lost ? C.dangerBg : C.fill,
         icon: (lost ? 'close' : 'radio-outline') as Icon,
       };
   const strength = heard ? bars(signal.smooth) : 0;
@@ -82,7 +85,7 @@ export default function ProximityScreen({ report: r, signal, now, onHealth, onCl
       {zone === 'NEAR' && (
         <View style={[ui.strip, { backgroundColor: C.safeBg, marginTop: 12, marginBottom: 0 }]}>
           <Ionicons name="eye-outline" size={16} color={C.safe} />
-          <Text style={[ui.stripText, { color: C.safe }]}>السوار قريب جدًا منك، ابحث حولك بعينك</Text>
+          <Text style={[ui.stripText, { color: C.safe }]}>{tr('السوار قريب جدًا منك، ابحث حولك بعينك', 'The bracelet is very close, look around you')}</Text>
         </View>
       )}
 
@@ -116,27 +119,27 @@ export default function ProximityScreen({ report: r, signal, now, onHealth, onCl
               />
             ))}
           </View>
-          <Text style={s.metricLabel}>قوة الإشارة</Text>
+          <Text style={s.metricLabel}>{tr('قوة الإشارة', 'Signal')}</Text>
         </View>
         <View style={s.metric}>
           <Text style={s.metricNum}>{metres == null ? '—' : metres <= 2 ? '≤ 2' : `${metres}`}</Text>
-          <Text style={s.metricLabel}>متر تقريبًا</Text>
+          <Text style={s.metricLabel}>{tr('متر تقريبًا', 'metres approx.')}</Text>
         </View>
         <View style={s.metric}>
-          <Text style={s.metricNum}>{ago == null ? '—' : ago < 2 ? 'الآن' : `${ago} ث`}</Text>
-          <Text style={s.metricLabel}>آخر إشارة</Text>
+          <Text style={s.metricNum}>{ago == null ? '—' : ago < 2 ? tr('الآن', 'now') : tr(`${ago} ث`, `${ago}s`)}</Text>
+          <Text style={s.metricLabel}>{tr('آخر إشارة', 'Last signal')}</Text>
         </View>
       </View>
 
       <View style={s.actions}>
         <Pressable style={ui.btn} onPress={onClose}>
           <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
-          <Text style={ui.btnText}>{lostChild ? 'وجدته، أغلق البلاغ' : 'وصلت إليه، أغلق البلاغ'}</Text>
+          <Text style={ui.btnText}>{lostChild ? tr('وجدته، أغلق البلاغ', 'Found them, close report') : tr('وصلت إليه، أغلق البلاغ', 'I’m with them, close report')}</Text>
         </Pressable>
         {r.health && (
           <Pressable style={ui.btnGhost} onPress={onHealth}>
             <Ionicons name="medkit-outline" size={18} color={C.danger} />
-            <Text style={ui.btnGhostText}>الحالة الصحية</Text>
+            <Text style={ui.btnGhostText}>{tr('الحالة الصحية', 'Health condition')}</Text>
           </Pressable>
         )}
       </View>
@@ -146,7 +149,10 @@ export default function ProximityScreen({ report: r, signal, now, onHealth, onCl
         <View style={s.tech}>
           <Text style={s.techText}>
             {/* ⁦ ⁩ keep "-92" from flipping to "92-" inside Arabic text */}
-            {`قراءة السوار · الإشارة الآن ⁦${signal.rssi}⁩ · المتوسط ⁦${signal.smooth}⁩`}
+            {tr(
+              `قراءة السوار · الإشارة الآن ⁦${signal.rssi}⁩ · المتوسط ⁦${signal.smooth}⁩`,
+              `Bracelet reading · signal now ${signal.rssi} · average ${signal.smooth}`,
+            )}
           </Text>
         </View>
       )}
@@ -172,7 +178,7 @@ const s = StyleSheet.create({
   metrics: { flexDirection: 'row-reverse', gap: 10, marginTop: 22 },
   metric: {
     flex: 1, alignItems: 'center', justifyContent: 'flex-end', minHeight: 92,
-    backgroundColor: C.card, borderWidth: 1.5, borderColor: C.border, borderRadius: 16, padding: 12,
+    ...ui.tile, padding: 12,
   },
   bigBars: { flexDirection: 'row', alignItems: 'flex-end', gap: 4, height: 46 },
   bigBar: { width: 9, borderRadius: 3 },

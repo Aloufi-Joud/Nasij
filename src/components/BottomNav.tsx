@@ -1,7 +1,9 @@
 // Bottom tab bar. dot = red marker for something waiting on that tab.
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Text } from './Text';
+import { Pressable } from './Motion';
 import { Ionicons } from '@expo/vector-icons';
-import { C } from '../theme';
+import { C, shadow } from '../theme';
 import type { IconName } from './Header';
 
 export function BottomNav<K extends string>(p: {
@@ -12,11 +14,14 @@ export function BottomNav<K extends string>(p: {
   return (
     <View style={s.nav}>
       {p.tabs.map((t) => {
-        const color = p.active === t.key ? C.primary : C.faint;
+        const on = p.active === t.key;
+        const color = on ? C.primary : C.faint;
+        // Active tab gets the filled icon, so the state reads by shape, not just colour
+        const icon = (on ? t.icon.replace(/-outline$/, '') : t.icon) as IconName;
         return (
-          <Pressable key={t.key} style={s.item} onPress={() => p.onChange(t.key)}>
+          <Pressable key={t.key} style={[s.item, on && s.itemOn]} onPress={() => p.onChange(t.key)} accessibilityRole="tab" accessibilityState={{ selected: on }}>
             <View>
-              <Ionicons name={t.icon} size={22} color={color} />
+              <Ionicons name={icon} size={22} color={color} />
               {t.dot && <View style={s.dot} />}
             </View>
             <Text style={[s.text, { color }]}>{t.label}</Text>
@@ -27,13 +32,15 @@ export function BottomNav<K extends string>(p: {
   );
 }
 
+// Floating bar: sits above the content with a soft shadow, active tab gets a tinted pill
 const s = StyleSheet.create({
   nav: {
-    position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row-reverse', justifyContent: 'space-around',
-    backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: C.border, paddingTop: 10, paddingBottom: 30,
+    position: 'absolute', bottom: 22, left: 16, right: 16, flexDirection: 'row-reverse', gap: 4,
+    backgroundColor: '#fff', borderRadius: 26, padding: 6, ...shadow.card, shadowOpacity: 0.12,
   },
-  item: { alignItems: 'center', gap: 3, minWidth: 70 },
-  text: { fontSize: 11, fontWeight: '600' },
+  item: { flex: 1, alignItems: 'center', gap: 2, paddingVertical: 8, borderRadius: 20 },
+  itemOn: { backgroundColor: C.techBg },
+  text: { fontSize: 11, fontWeight: '700' },
   dot: {
     position: 'absolute', top: -2, right: -4, width: 9, height: 9, borderRadius: 5,
     backgroundColor: C.danger, borderWidth: 1.5, borderColor: '#fff',

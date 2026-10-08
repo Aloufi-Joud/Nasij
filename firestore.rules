@@ -62,6 +62,15 @@ service cloud.firestore {
         allow create: if signedIn() && getAfter(/databases/$(database)/documents/reports/$(id)).data.familyId == me();
         allow read, delete: if signedIn() && (report().familyId == me() || report().assignedVolunteerId == me() || isSecurity());
       }
+
+      // Last sighting for the family: area and time only (volunteer and exact location stay in /sightings)
+      match /seen/{doc} {
+        function report() { return get(/databases/$(database)/documents/reports/$(id)).data; }
+        allow read, delete: if signedIn() && (report().familyId == me() || report().assignedVolunteerId == me() || isSecurity());
+        allow create, update: if isVolunteer() && report().status != 'closed'
+          && request.resource.data.keys().hasOnly(['area', 'at'])
+          && request.resource.data.area is string && request.resource.data.at is int;
+      }
     }
 
     // Each volunteer writes their own on-duty status and location

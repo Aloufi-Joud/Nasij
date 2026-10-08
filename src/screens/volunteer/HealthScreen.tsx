@@ -1,23 +1,40 @@
 // Health condition: shown only to the volunteer who accepted the report.
 // Opens first for an elderly emergency or possible fall, and from the proximity screen
 // for a lost child with a health condition.
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, StyleSheet, View } from 'react-native';
+import { Text } from '../../components/Text';
+import { Pressable } from '../../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
 import { C, F, ui } from '../../theme';
 import type { Report, ReportType } from '../../mock';
 import ReportPhoto from './ReportPhoto';
 import { TYPE_UI, since, whoLine } from './labels';
+import { tr } from '../../i18n';
 
 const AMBULANCE = '997'; // Saudi Red Crescent
 
 const STEPS: Record<ReportType, string[]> = {
-  emergency: ['اتجه إليه الآن وتأكد أنه بخير', 'إذا كان مصابًا أو لا يستجيب اتصل بالإسعاف فورًا', 'ابقَ معه، وأخبر المسعفين بحالته الصحية'],
-  fall: [
-    'اتجه إليه الآن، قد يكون سقط',
-    'لا تحرّكه إذا اشتكى من ألم أو لم يقدر يقوم',
-    'اتصل بالإسعاف إذا كان مصابًا أو لا يستجيب، وابقَ معه حتى يصلوا',
-  ],
-  lost: ['عند العثور عليه انتبه لحالته قبل أي شيء', 'إذا احتاج مساعدة طبية اتصل بالإسعاف', 'أخبر الأمن أو الإسعاف بحالته عند التسليم'],
+  get emergency() {
+    return [
+      tr('اتجه إليه الآن وتأكد أنه بخير', 'Go to them now and check they’re okay'),
+      tr('إذا كان مصابًا أو لا يستجيب اتصل بالإسعاف فورًا', 'If they’re hurt or not responding, call an ambulance right away'),
+      tr('ابقَ معه، وأخبر المسعفين بحالته الصحية', 'Stay with them and tell the paramedics about their condition'),
+    ];
+  },
+  get fall() {
+    return [
+      tr('اتجه إليه الآن، قد يكون سقط', 'Go to them now, they may have fallen'),
+      tr('لا تحرّكه إذا اشتكى من ألم أو لم يقدر يقوم', 'Don’t move them if they’re in pain or can’t get up'),
+      tr('اتصل بالإسعاف إذا كان مصابًا أو لا يستجيب، وابقَ معه حتى يصلوا', 'Call an ambulance if they’re hurt or not responding, and stay until it arrives'),
+    ];
+  },
+  get lost() {
+    return [
+      tr('عند العثور عليه انتبه لحالته قبل أي شيء', 'Once found, check on their condition first'),
+      tr('إذا احتاج مساعدة طبية اتصل بالإسعاف', 'If they need medical help, call an ambulance'),
+      tr('أخبر الأمن أو الإسعاف بحالته عند التسليم', 'Tell security or paramedics about their condition at handover'),
+    ];
+  },
 };
 
 type Props = {
@@ -54,7 +71,7 @@ export default function HealthScreen({ report: r, now, loading, onGoTo, goToLabe
         </View>
       </View>
 
-      <Text style={ui.caption}>الحالة الصحية</Text>
+      <Text style={ui.caption}>{tr('الحالة الصحية', 'Health condition')}</Text>
       {r.health ? (
         <View style={[ui.card, { borderColor: C.dangerBorder }]}>
           <View style={s.condRow}>
@@ -62,15 +79,15 @@ export default function HealthScreen({ report: r, now, loading, onGoTo, goToLabe
             <Text style={s.cond}>{r.health.condition}</Text>
           </View>
           <Text style={s.notes}>{r.health.notes}</Text>
-          <Text style={s.from}>كتبتها العائلة عند إضافته</Text>
+          <Text style={s.from}>{tr('كتبتها العائلة عند إضافته', 'Written by the family when adding them')}</Text>
         </View>
       ) : (
         <View style={ui.card}>
-          <Text style={ui.muted}>{loading ? 'جارٍ تحميل الحالة الصحية…' : 'لم تضف العائلة حالة صحية'}</Text>
+          <Text style={ui.muted}>{loading ? tr('جارٍ تحميل الحالة الصحية…', 'Loading health details…') : tr('لم تضف العائلة حالة صحية', 'The family added no health condition')}</Text>
         </View>
       )}
 
-      <Text style={ui.caption}>ماذا تفعل</Text>
+      <Text style={ui.caption}>{tr('ماذا تفعل', 'What to do')}</Text>
       <View style={ui.card}>
         {STEPS[r.type].map((step, i) => (
           <View key={i} style={[s.step, i > 0 && { marginTop: 10 }]}>
@@ -85,7 +102,7 @@ export default function HealthScreen({ report: r, now, loading, onGoTo, goToLabe
       <View style={s.actions}>
         <Pressable style={[ui.btn, { backgroundColor: C.danger }]} onPress={() => Linking.openURL(`tel:${AMBULANCE}`)}>
           <Ionicons name="call" size={19} color="#fff" />
-          <Text style={ui.btnText}>اتصل بالإسعاف {AMBULANCE}</Text>
+          <Text style={ui.btnText}>{tr(`اتصل بالإسعاف ${AMBULANCE}`, `Call ambulance ${AMBULANCE}`)}</Text>
         </Pressable>
         <Pressable style={ui.btnGhost} onPress={onGoTo}>
           <Ionicons name={urgent ? 'navigate-outline' : 'arrow-forward'} size={18} color={C.primary} />
@@ -95,7 +112,7 @@ export default function HealthScreen({ report: r, now, loading, onGoTo, goToLabe
 
       <View style={s.privacy}>
         <Ionicons name="lock-closed-outline" size={14} color={C.accent} />
-        <Text style={s.privacyText}>هذه البيانات تظهر لك وحدك لأنك قبلت البلاغ، وتُحذف من جوالك عند إغلاقه</Text>
+        <Text style={s.privacyText}>{tr('هذه البيانات تظهر لك وحدك لأنك قبلت البلاغ، وتُحذف من جوالك عند إغلاقه', 'Only you see this because you accepted the report. It’s deleted from your phone when it closes')}</Text>
       </View>
     </>
   );

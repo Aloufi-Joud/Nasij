@@ -4,10 +4,14 @@
 // Privacy: the photo, description and health of a case live only in this screen's state,
 // and are dropped when the case closes. The history tab keeps the first name and the outcome only.
 import { useEffect, useRef, useState } from 'react';
-import { Linking, Pressable, ScrollView, StyleSheet, Text, Vibration, View } from 'react-native';
+import { Linking, ScrollView, StyleSheet, Vibration, View } from 'react-native';
+import { Text } from '../../components/Text';
+import { FadeIn, Pressable } from '../../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { C, F, ui } from '../../theme';
+import { Header, HeaderButton, Pill } from '../../components/Header';
+import { BottomNav } from '../../components/BottomNav';
 import type { ClosedAs, Language, PasserbyReport, Report } from '../../mock';
 import { auth } from '../../firebase';
 import { acceptReport, closeReport, getReportContact, getReportHealth, subscribeOpenReports } from '../../firebase/reports';
@@ -22,6 +26,7 @@ import ProximityScreen from './ProximityScreen';
 import { CLOSED_UI, TYPE_UI, clock, since } from './labels';
 import { listen, useBraceletSignal } from '../../ble/scanner';
 import { braceletMac } from '../../ble/signal';
+import { isEn, tr } from '../../i18n';
 
 type Tab = 'duty' | 'case' | 'history';
 type Step = 'proximity' | 'health' | 'close';
@@ -128,7 +133,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
   useEffect(() => {
     if (!shownId || accepting.current === shownId) return;
     const r = open.find((x) => x.id === shownId);
-    if (r?.status !== 'open') dropShown(shownId, r ? `تولّى متطوع آخر بلاغ ${r.member.name}` : null);
+    if (r?.status !== 'open') dropShown(shownId, r ? tr(`تولّى متطوع آخر بلاغ ${r.member.name}`, `Another volunteer took ${r.member.name}’s report`) : null);
   }, [open, shownId]);
 
   // The case this volunteer took was closed by the family or security, or given to someone else
@@ -140,8 +145,14 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
     endCase(
       null,
       r
-        ? `حوّل فريق الأمن بلاغ ${active.member.name} لمتطوع آخر. حُذفت بياناته من جوالك`
-        : `أُغلق بلاغ ${active.member.name} من العائلة أو فريق الأمن. حُذفت بياناته من جوالك`,
+        ? tr(
+            `حوّل فريق الأمن بلاغ ${active.member.name} لمتطوع آخر. حُذفت بياناته من جوالك`,
+            `Security moved ${active.member.name}’s report to another volunteer. Their details were deleted from your phone`,
+          )
+        : tr(
+            `أُغلق بلاغ ${active.member.name} من العائلة أو فريق الأمن. حُذفت بياناته من جوالك`,
+            `${active.member.name}’s report was closed by the family or security. Their details were deleted from your phone`,
+          ),
       'warn',
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -217,7 +228,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
         setOnDuty(true);
       }
     } catch {
-      setNotice({ text: 'تعذّر الاتصال، تحقق من الإنترنت وحاول مرة ثانية', tone: 'danger' });
+      setNotice({ text: tr('تعذّر الاتصال، تحقق من الإنترنت وحاول مرة ثانية', 'Couldn’t connect, check the internet and try again'), tone: 'danger' });
     } finally {
       setDutyBusy(false);
     }
@@ -230,7 +241,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
     try {
       // Transaction: if two volunteers tap at once, only one gets the case
       if (!(await acceptReport(r.id, uid))) {
-        dropShown(r.id, `تولّى متطوع آخر بلاغ ${r.member.name}`);
+        dropShown(r.id, tr(`تولّى متطوع آخر بلاغ ${r.member.name}`, `Another volunteer took ${r.member.name}’s report`));
         return;
       }
       setShownId(null);
@@ -246,7 +257,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
         .finally(() => setHealthLoading(false));
       setHandoverCode(undefined);
     } catch {
-      setNotice({ text: 'تعذّر قبول البلاغ، تحقق من الإنترنت وحاول مرة ثانية', tone: 'danger' });
+      setNotice({ text: tr('تعذّر قبول البلاغ، تحقق من الإنترنت وحاول مرة ثانية', 'Couldn’t accept the report, check the internet and try again'), tone: 'danger' });
     } finally {
       accepting.current = null;
     }
@@ -279,52 +290,48 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
   const closeCase = (as: ClosedAs) => {
     if (!active) return;
     const { id, member } = active;
-    endCase(as, `أُغلق بلاغ ${member.name}. حُذفت صلاحية السوار وبياناته الصحية من جوالك`, 'safe');
+    endCase(
+      as,
+      tr(
+        `أُغلق بلاغ ${member.name}. حُذفت صلاحية السوار وبياناته الصحية من جوالك`,
+        `${member.name}’s report is closed. Bracelet access and health details were deleted from your phone`,
+      ),
+      'safe',
+    );
     closeReport(id, as).catch((e: { code?: string }) => {
       if (e?.code !== 'permission-denied' && e?.code !== 'not-found')
-        setNotice({ text: `لم يصل إغلاق بلاغ ${member.name} للنظام، أبلغ فريق الأمن`, tone: 'danger' });
+        setNotice({ text: tr(`لم يصل إغلاق بلاغ ${member.name} للنظام، أبلغ فريق الأمن`, `Closing ${member.name}’s report didn’t reach the system, tell security`), tone: 'danger' });
     });
   };
 
-  const title = tab === 'duty' ? 'المناوبة' : tab === 'case' ? 'البلاغ' : 'سجلي';
+  const title = tab === 'duty' ? tr('المناوبة', 'Duty') : tab === 'case' ? tr('البلاغ', 'Report') : tr('سجلي', 'History');
 
   return (
     <View style={s.screen}>
-      {/* Header */}
-      <View style={s.header}>
-        <View style={s.headerRow}>
-          <View>
-            <Text style={s.headerSub}>نسيج · متطوع</Text>
-            <Text style={s.headerTitle}>{title}</Text>
-          </View>
-          {onSwitchRole && (
-            <Pressable style={s.headerBtn} onPress={onSwitchRole} hitSlop={6}>
-              <Ionicons name="swap-horizontal" size={20} color="#fff" />
-            </Pressable>
-          )}
-        </View>
-        <View style={s.pills}>
-          <View style={s.pill}>
-            <View style={[ui.dot, { backgroundColor: onDuty ? '#7FD69B' : C.faint }]} />
-            <Text style={s.pillText}>{dutyBusy ? 'لحظة…' : onDuty ? 'في المناوبة' : 'خارج المناوبة'}</Text>
-          </View>
-          {active && (
-            <View style={[s.pill, { backgroundColor: 'rgba(212,132,26,0.25)' }]}>
-              <Ionicons name={TYPE_UI[active.type].icon} size={14} color="#FFC857" />
-              <Text style={[s.pillText, { color: '#FFC857', fontWeight: '700' }]}>بلاغ مفتوح: {active.member.name}</Text>
-            </View>
-          )}
-        </View>
-      </View>
+      <Header
+        sub={tr('نسيج · متطوع', 'Nasij · Volunteer')}
+        title={title}
+        actions={onSwitchRole && <HeaderButton icon="swap-horizontal" label={tr('تبديل إلى عائلة', 'Switch to family')} onPress={onSwitchRole} />}
+      >
+        <Pill dot={onDuty ? '#7FD69B' : C.faint} text={dutyBusy ? tr('لحظة…', 'One moment…') : onDuty ? tr('في المناوبة', 'On duty') : tr('خارج المناوبة', 'Off duty')} />
+        {active && <Pill alert icon={TYPE_UI[active.type].icon} text={tr(`بلاغ مفتوح: ${active.member.name}`, `Open report: ${active.member.name}`)} />}
+      </Header>
 
       <ScrollView contentContainerStyle={s.body}>
+        <FadeIn key={tab}>
         {tab === 'duty' && (
           <>
-            {incoming && <AlertCard report={incoming} now={now} speaks={speaks(incoming)} onAccept={accept} onDecline={skip} />}
+            {incoming && (
+              <FadeIn key={incoming.id}>
+                <AlertCard report={incoming} now={now} speaks={speaks(incoming)} onAccept={accept} onDecline={skip} />
+              </FadeIn>
+            )}
             {active && (
               <Pressable style={[ui.strip, { backgroundColor: C.warnBg }]} onPress={() => setTab('case')}>
-                <Ionicons name="arrow-back" size={15} color={C.warn} />
-                <Text style={[ui.stripText, { color: C.warn }]}>لديك بلاغ مفتوح عن {active.member.name}، اضغط للعودة إليه</Text>
+                <Ionicons name={isEn() ? 'arrow-forward' : 'arrow-back'} size={15} color={C.warn} />
+                <Text style={[ui.stripText, { color: C.warn }]}>
+                  {tr(`لديك بلاغ مفتوح عن ${active.member.name}، اضغط للعودة إليه`, `You have an open report for ${active.member.name}, tap to return`)}
+                </Text>
               </Pressable>
             )}
             <DutyScreen
@@ -352,7 +359,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
         {tab === 'case' && active?.phone && (
           <Pressable style={[ui.strip, { backgroundColor: C.safeBg }]} onPress={() => Linking.openURL(`tel:${active.phone}`)}>
             <Ionicons name="call-outline" size={16} color={C.safe} />
-            <Text style={[ui.stripText, { color: C.safe }]}>اتصل بأهل {active.member.name}: {active.phone}</Text>
+            <Text style={[ui.stripText, { color: C.safe }]}>{tr(`اتصل بأهل ${active.member.name}: ${active.phone}`, `Call ${active.member.name}’s family: ${active.phone}`)}</Text>
           </Pressable>
         )}
 
@@ -367,8 +374,8 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
           >
             <Ionicons name="hand-left-outline" size={16} color={C.safe} />
             <Text style={[ui.stripText, { color: C.safe }]}>
-              مارّ أبلغ عن سوار {active.member.name} {since(latestPasserby.at, now)}
-              {latestPasserby.location ? '، اضغط لفتح موقعه' : ''}
+              {tr(`مارّ أبلغ عن سوار ${active.member.name} ${since(latestPasserby.at, now)}`, `A passer-by reported ${active.member.name}’s bracelet ${since(latestPasserby.at, now)}`)}
+              {latestPasserby.location ? tr('، اضغط لفتح موقعه', ', tap to open their location') : ''}
             </Text>
           </Pressable>
         )}
@@ -377,8 +384,8 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
           (!active ? (
             <View style={s.empty}>
               <Ionicons name="checkmark-done-circle-outline" size={52} color={C.mint} />
-              <Text style={s.emptyTitle}>لا يوجد بلاغ مفتوح</Text>
-              <Text style={s.emptyText}>{onDuty ? 'بيوصلك تنبيه أول ما يُبلَّغ عن حالة' : 'شغّل المناوبة عشان تستقبل البلاغات'}</Text>
+              <Text style={s.emptyTitle}>{tr('لا يوجد بلاغ مفتوح', 'No open report')}</Text>
+              <Text style={s.emptyText}>{onDuty ? tr('بيوصلك تنبيه أول ما يُبلَّغ عن حالة', 'You’ll get an alert as soon as a case is reported') : tr('شغّل المناوبة عشان تستقبل البلاغات', 'Go on duty to receive reports')}</Text>
             </View>
           ) : step === 'proximity' ? (
             <ProximityScreen
@@ -394,7 +401,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
               now={now}
               loading={healthLoading}
               onGoTo={() => setStep('proximity')}
-              goToLabel={active.type === 'lost' ? 'رجوع للبحث' : 'اتجه إليه'}
+              goToLabel={active.type === 'lost' ? tr('رجوع للبحث', 'Back to search') : tr('اتجه إليه', 'Go to them')}
             />
           ) : (
             <CloseCaseScreen report={active} code={handoverCode} onConfirm={closeCase} onCancel={() => setStep('proximity')} />
@@ -402,10 +409,10 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
 
         {tab === 'history' && (
           <>
-            <Text style={ui.sectionTitle}>البلاغات المغلقة</Text>
-            {closed.length === 0 && <Text style={s.none}>لم تغلق أي بلاغ بعد</Text>}
+            <Text style={ui.sectionTitle}>{tr('البلاغات المغلقة', 'Closed reports')}</Text>
+            {closed.length === 0 && <Text style={s.none}>{tr('لم تغلق أي بلاغ بعد', 'You haven’t closed any reports yet')}</Text>}
             {closed.map((c, i) => {
-              const u = c.closedAs ? CLOSED_UI[c.closedAs] : { icon: 'close-circle' as const, color: C.faint, label: 'أغلقته العائلة أو الأمن' };
+              const u = c.closedAs ? CLOSED_UI[c.closedAs] : { icon: 'close-circle' as const, color: C.faint, label: tr('أغلقته العائلة أو الأمن', 'Closed by the family or security') };
               return (
                 <View key={`${c.id}-${i}`} style={s.logRow}>
                   <Ionicons name={u.icon} size={20} color={u.color} />
@@ -419,74 +426,36 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
                 </View>
               );
             })}
-            {closed.length > 0 && <Text style={s.note}>يبقى في السجل الاسم الأول ونتيجة البلاغ فقط</Text>}
+            {closed.length > 0 && <Text style={s.note}>{tr('يبقى في السجل الاسم الأول ونتيجة البلاغ فقط', 'History keeps only the first name and the outcome')}</Text>}
           </>
         )}
+        </FadeIn>
       </ScrollView>
 
-      {/* Bottom nav */}
-      <View style={s.nav}>
-        {(
-          [
-            { key: 'duty', label: 'المناوبة', icon: 'radio-outline' },
-            { key: 'case', label: 'البلاغ', icon: 'search-outline' },
-            { key: 'history', label: 'سجلي', icon: 'time-outline' },
-          ] as const
-        ).map((n) => (
-          <Pressable key={n.key} style={s.navItem} onPress={() => setTab(n.key)}>
-            <View>
-              <Ionicons name={n.icon} size={22} color={tab === n.key ? C.primary : C.faint} />
-              {n.key === 'case' && active && <View style={s.navDot} />}
-              {n.key === 'duty' && incoming && <View style={s.navDot} />}
-            </View>
-            <Text style={[s.navText, { color: tab === n.key ? C.primary : C.faint }]}>{n.label}</Text>
-          </Pressable>
-        ))}
-      </View>
+      <BottomNav
+        active={tab}
+        onChange={setTab}
+        tabs={[
+          { key: 'duty', label: tr('المناوبة', 'Duty'), icon: 'radio-outline', dot: !!incoming },
+          { key: 'case', label: tr('البلاغ', 'Report'), icon: 'search-outline', dot: !!active },
+          { key: 'history', label: tr('سجلي', 'History'), icon: 'time-outline' },
+        ]}
+      />
     </View>
   );
 }
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.bg },
-  header: {
-    backgroundColor: C.primary, paddingTop: 64, paddingBottom: 18, paddingHorizontal: 22,
-    borderBottomLeftRadius: 28, borderBottomRightRadius: 28,
-  },
-  headerRow: { flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center' },
-  headerSub: { color: 'rgba(255,255,255,0.6)', fontSize: 13, textAlign: 'right' },
-  headerTitle: { color: '#fff', fontSize: F.title, fontWeight: '700', textAlign: 'right' },
-  headerBtn: { padding: 9, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.12)' },
-  pills: { flexDirection: 'row-reverse', gap: 10, marginTop: 16, flexWrap: 'wrap' },
-  pill: {
-    flexDirection: 'row-reverse', alignItems: 'center', gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12,
-  },
-  pillText: { color: '#fff', fontSize: 12, fontWeight: '500' },
-
   body: { padding: 20, paddingBottom: 120 },
   empty: { alignItems: 'center', marginTop: 60, paddingHorizontal: 20 },
   emptyTitle: { color: C.primary, fontSize: F.h2, fontWeight: '700', marginTop: 12 },
   emptyText: { color: C.muted, fontSize: F.small, textAlign: 'center', marginTop: 6 },
   none: { color: C.faint, textAlign: 'center', marginTop: 30 },
 
-  logRow: {
-    flexDirection: 'row-reverse', alignItems: 'center', gap: 10,
-    backgroundColor: C.card, borderWidth: 1, borderColor: C.border, borderRadius: 14, padding: 13, marginBottom: 8,
-  },
+  logRow: { ...ui.tile, flexDirection: 'row-reverse', alignItems: 'center', gap: 12, marginBottom: 10 },
   logName: { color: C.text, fontSize: 14, fontWeight: '600', textAlign: 'right' },
   logSub: { color: C.muted, fontSize: 12.5, textAlign: 'right', marginTop: 2 },
-  logTime: { color: C.faint, fontSize: 12 },
+  logTime: { color: C.faint, fontSize: 12, fontVariant: ['tabular-nums'] },
   note: { color: C.faint, fontSize: 12, textAlign: 'center', marginTop: 8 },
-
-  nav: {
-    position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row-reverse', justifyContent: 'space-around',
-    backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: C.border, paddingTop: 10, paddingBottom: 30,
-  },
-  navItem: { alignItems: 'center', gap: 3, minWidth: 70 },
-  navText: { fontSize: 11, fontWeight: '600' },
-  navDot: {
-    position: 'absolute', top: -2, right: -4, width: 9, height: 9, borderRadius: 5,
-    backgroundColor: C.danger, borderWidth: 1.5, borderColor: '#fff',
-  },
 });

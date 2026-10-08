@@ -1,5 +1,6 @@
 // Coloured warning strip, e.g. "الإشارة تضعف". Tappable when onPress is given.
-import { Pressable, Text } from 'react-native';
+import { Text } from './Text';
+import { Pressable } from './Motion';
 import { Ionicons } from '@expo/vector-icons';
 import { C, ui } from '../theme';
 import type { IconName } from './Header';

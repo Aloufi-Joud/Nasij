@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../../../src/firebase';
 import { subscribeOpenReports } from '../../../src/firebase/reports';
-import { zones, type Member, type PasserbyReport, type Point, type Report, type Sighting, type Volunteer, type Zone } from '../../../src/mock';
+import { zones, members as mockMembers, reports as mockReports, volunteers as mockVolunteers, passerbyReports as mockPasserby, type Member, type PasserbyReport, type Point, type Report, type Sighting, type Volunteer, type Zone } from '../../../src/mock';
 import { metresBetween } from '../../../src/components/geo';
 
 // Drawn Expo 2030 site, shared with MapView (approximation of the published masterplan, not survey data)
@@ -55,7 +55,18 @@ function useCollection<T>(name: string, ...filters: ReturnType<typeof where>[]):
   return rows;
 }
 
-export function useLive() {
+// ponytail: demo mode, no login and mock data, only in `npm run dev`. Remove once a security account exists.
+export const DEMO = import.meta.env.DEV;
+
+function useMock() {
+  const memberOf = (braceletId: string) => mockMembers.find((m) => m.braceletId?.toUpperCase() === braceletId.toUpperCase());
+  const events: LiveEvent[] = mockReports.map((r) => ({ id: r.id, at: r.createdAt, kind: 'report' as const, reportId: r.id, text: `بلاغ جديد: ${r.member.name}، ${TYPE[r.type]}` }));
+  return { reports: mockReports, volunteers: mockVolunteers, passerby: mockPasserby, events, memberOf };
+}
+
+export const useLive = DEMO ? useMock : useFirestore;
+
+function useFirestore() {
   const [reports, setReports] = useState<Report[]>([]);
   useEffect(() => subscribeOpenReports(setReports), []);
   const since = useState(() => Date.now() - SINCE_MS)[0];

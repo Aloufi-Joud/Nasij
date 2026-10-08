@@ -50,6 +50,7 @@ export type Report = {
   description: string; // clothing and looks, written by the parent
   health: Health | null; // shown only to the assigned volunteer, deleted on close
   phone: string | null; // family phone, same privacy as health
+  memberId?: string; // which of the family's members, so the family app finds its open reports after a restart
   area: string; // last known area inside the event
   location: Point | null; // last known position, for the security map
   createdAt: number; // ms since epoch
