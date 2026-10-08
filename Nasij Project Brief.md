@@ -335,7 +335,7 @@ The focus now is visible features: build the app first, then harden it step by s
 - **Replay attack:** someone records a child's broadcast and replays it near the parent, so the app shows "near" while the child is gone. Fix: rotating IDs with a secret only the system knows
 - **Volunteer role assigned by staff:** today anyone can pick "volunteer" at login. The role must come from the `users` document, set by staff, and be checked in Firestore rules
 - **Spam on the passer-by page:** limit in Firestore rules, e.g. one report per bracelet per minute
-- **Handover code check on the server:** today the assigned volunteer's app reads the code to compare it, so a fake volunteer could read it. Check it in a Cloud Function instead (comes with staff-assigned volunteer roles)
+- **Handover code check on the server:** see "Blocked by the free plan" below
 - **Linking code at the gate:** a code handed over with the bracelet, on top of the press check
 - **Reunion code** when a child is found, with a fallback if the parent's phone is dead (staff ID check against the gate record)
 - **Copies outlive the case:** the child's photo can stay on volunteers' phones after the report closes
@@ -343,3 +343,14 @@ The focus now is visible features: build the app first, then harden it step by s
 - **Early warning with the phone locked:** the app warns only while open. iOS background scanning ignores `allowDuplicates` (rare readings, false "signal lost"), and may not match a `FEE0` filter because `FEE0` is sent as service data, not as an advertised service UUID. Pitch: fast, privacy-safe search once someone is lost; early warning while the app is open
 - **Battery:** the vendor's 1.5 years likely assumes power saving on; measure it with power saving off and 500 ms intervals
 - **Resetting bracelets at the exit gate:** each needs a password connection and a sticker rewrite; time it before promising it
+
+### Blocked by the free plan (needs Firebase Blaze)
+
+The project runs on the free Spark plan, which has no Cloud Functions (no code on the server) and no Storage. These fixes are known but cannot be done until the project moves to Blaze (pay as you go; small use stays near free, but it needs a card):
+
+- **Handover code checked on the server:** today the volunteer's app checks the code, and the rules let the assigned volunteer close a report as "found" without it. Someone calling Firebase directly can skip the code. Fix: a Cloud Function takes the typed code, compares it, and closes the report itself; the volunteer's phone never sees the right code
+- **Cleanup the app cannot be trusted to do:** a report stays open if the family never opens the app again (the app closes orphans only when it starts). Fix: a scheduled function closes reports older than a few hours and deletes their health, phone and photo
+- **Photos:** stored as small base64 text inside the report because there is no Storage; real photos need Storage
+- **Rate limits that need a counter:** e.g. passer-by spam beyond what rules can check
+
+Possible on the free plan, just not done yet: **volunteer role set by staff** (staff edit `users/{uid}.role` in the Firebase console, and the rules stop users from giving themselves `volunteer`). Note that this alone does not fix the handover code: an assigned volunteer could still close without it.
