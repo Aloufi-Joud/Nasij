@@ -8,6 +8,8 @@ service cloud.firestore {
     function role() { return get(/databases/$(database)/documents/users/$(me())).data.role; }
     function isSecurity() { return signedIn() && role() == 'security'; }
     function isVolunteer() { return signedIn() && role() == 'volunteer'; }
+    // A client clock within 5 minutes of the server's
+    function nearNow(ms) { return ms > request.time.toMillis() - 300000 && ms < request.time.toMillis() + 300000; }
     function changes(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
 
     // A user may pick family or volunteer for themselves, never security.
@@ -64,12 +66,14 @@ service cloud.firestore {
       }
 
       // Last sighting for the family: area and time only (volunteer and exact location stay in /sightings)
+      // Only the one 'last' document, with a time close to now (a volunteer cannot back- or future-date it)
       match /seen/{doc} {
         function report() { return get(/databases/$(database)/documents/reports/$(id)).data; }
         allow read, delete: if signedIn() && (report().familyId == me() || report().assignedVolunteerId == me() || isSecurity());
-        allow create, update: if isVolunteer() && report().status != 'closed'
+        allow create, update: if isVolunteer() && doc == 'last' && report().status != 'closed'
           && request.resource.data.keys().hasOnly(['area', 'at'])
-          && request.resource.data.area is string && request.resource.data.at is int;
+          && request.resource.data.area is string && request.resource.data.area.size() <= 60
+          && request.resource.data.at is int && nearNow(request.resource.data.at);
       }
     }
 
@@ -82,7 +86,11 @@ service cloud.firestore {
     // Where a reported bracelet was heard, with the volunteer's location: volunteers and security only
     match /sightings/{id} {
       allow read: if isVolunteer() || isSecurity();
-      allow create: if isVolunteer() && request.resource.data.volunteerId == me();
+      // Only for a report that is still open, stamped with the volunteer's own id and the current time
+      allow create: if isVolunteer() && request.resource.data.volunteerId == me()
+        && request.resource.data.reportId is string
+        && get(/databases/$(database)/documents/reports/$(request.resource.data.reportId)).data.status != 'closed'
+        && request.resource.data.at is int && nearNow(request.resource.data.at);
     }
 
     // Passer-by: no login, can only drop a bracelet number (plus time and location)
