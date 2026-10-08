@@ -254,7 +254,7 @@ All three people build their screens first with fake data, so the whole app can 
 
 The work is split by topic: Person 2 builds the base everyone uses (Firebase, rules, reports, dashboard), Person 3 owns everything volunteer and passer-by, Person 1 owns everything bracelet and family. Since 2026-10-06 Person 1 also does Person 2's tasks.
 
-**Status 2026-10-08:** Person 3 pushed the volunteer and passer-by backend (sightings, passer-by, on-duty location, volunteer screens on live data). Person 1 and Person 2 tasks are done except the event boundary, the volunteer listening (`addSighting` is now ready) and the work that needs the phones (Mac install, NFC, final integration). Firebase project `nasij-0` is live. How to use it: see the Firebase section in the README.
+**Status 2026-10-08:** Person 3 pushed the volunteer and passer-by backend (sightings, passer-by, on-duty location, volunteer screens on live data). Person 1 and Person 2 tasks are done except the event boundary and the work that needs the phones (Mac install, NFC, final integration). Firebase project `nasij-0` is live. How to use it: see the Firebase section in the README.
 
 **Changes on 2026-10-08 that affect everyone** (branch `family-members-languages`):
 
@@ -268,7 +268,7 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 
 1. [x] Move the Bluetooth logic (parsing, smoothing, **direction**) into `src/ble/` so the family and volunteer screens share it
 2. [x] Feed real readings into the volunteer proximity screen instead of `useFakeSignal`
-3. [ ] (`addSighting` is ready) Volunteer phone listens for bracelets with open reports and calls Person 3's `addSighting`, about once every 10 s per report (stay inside the free plan limits)
+3. [x] (done 2026-10-08, to test with two phones) Volunteer phone listens for bracelets with open reports and calls Person 3's `addSighting`, about once every 10 s per report (stay inside the free plan limits)
 4. [x] Bracelet functions in `src/firebase/bracelets.ts`: `claimBracelet` (after the press check; refuse if another family holds it) and `releaseBracelet`
 5. [x] "End of visit" button: deletes the member's data and releases the bracelet (no Cloud Functions, so the app does it)
 6. [ ] Family app on live data (all done except the event boundary; several members per family, saved in `members/{id}` with `familyId`, and they come back after login with their bracelets):
