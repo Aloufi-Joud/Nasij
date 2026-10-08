@@ -43,7 +43,9 @@ const PAIR_TIMEOUT_MS = 60000; // linking gives up waiting for the press after 1
 const EVENT_RADIUS_M = 150;
 
 type Zone = 'NEAR' | 'MEDIUM' | 'FAR' | 'LOST';
-type LogKind = Zone | 'SOS' | 'FALL' | 'REPORT' | 'FOUND' | 'EDGE';
+type LogKind = Zone | 'SOS' | 'FALL' | 'REPORT' | 'FOUND' | 'EDGE' | 'CANCELLED';
+// An emergency press waits this long before it reaches volunteers, so the family can cancel a press by mistake
+const SOS_DELAY_MS = 15_000;
 type PairView = { memberId: string; mac: string; heard: boolean; near: boolean; timedOut: boolean };
 type AlertKind = 'SOS' | 'FALL';
 
@@ -90,6 +92,7 @@ function formError(f: Form): string | null {
 
 const ZONE_UI: Record<LogKind, { label: string; color: string }> = {
   SOS: { get label() { return tr('طلب مساعدة', 'Help request'); }, color: C.danger },
+  CANCELLED: { get label() { return tr('ألغيت طلب المساعدة: ضغطة بالغلط', 'Help request cancelled: pressed by mistake'); }, color: C.muted },
   FALL: { get label() { return tr('احتمال سقوط', 'Possible fall'); }, color: C.danger },
   REPORT: { get label() { return tr('بلاغ للمتطوعين', 'Reported to volunteers'); }, color: C.danger },
   FOUND: { get label() { return tr('انقفل البلاغ', 'Report closed'); }, color: C.safe },
@@ -193,7 +196,10 @@ type Screen = { kind: 'lost' | 'found'; memberId: string } | null;
 export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: () => void; onLogout: () => void }) {
   const [bt, setBt] = useState<string>('');
   const [log, setLog] = useState<{ time: string; kind: LogKind; who: string }[]>([]);
-  const [sos, setSos] = useState<{ kind: AlertKind; who: string } | null>(null);
+  const [sos, setSos] = useState<{ kind: AlertKind; who: string; mac: string } | null>(null);
+  // Emergency presses waiting to go to volunteers: bracelet → time it will be sent
+  const pendingSos = useRef<Record<string, number>>({});
+  const [sosPending, setSosPending] = useState<Record<string, number>>({});
   const [tab, setTab] = useState<Tab>('home');
   const [members, setMembers] = useState<FamMember[]>([]);
   // 'new' = adding a member, an id = editing that member, null = form closed. First visit: the form is open.
@@ -317,6 +323,13 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         });
       }
 
+      for (const [mac, at] of Object.entries(pendingSos.current)) {
+        if (t < at) continue;
+        delete pendingSos.current[mac];
+        autoReport.current('emergency', mac);
+      }
+      setSosPending({ ...pendingSos.current });
+
       const next: Record<string, Live> = {};
       for (const [mac, tr] of Object.entries(tracks)) {
         const r = tr.latest;
@@ -340,10 +353,12 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
             Vibration.vibrate([0, 800, 300, 800, 300, 800]);
             if (!sosRef.current) {
               sosRef.current = true;
-              setSos({ kind, who });
+              setSos({ kind, who, mac });
             }
-            // Journey step 5: the alert also reaches the nearest volunteer
-            autoReport.current(kind === 'SOS' ? 'emergency' : 'fall', mac);
+            // Journey step 5: the alert also reaches the nearest volunteer.
+            // A press waits SOS_DELAY_MS first (the family can cancel it); a possible fall goes at once.
+            if (kind === 'SOS') pendingSos.current[mac] ??= t + SOS_DELAY_MS;
+            else autoReport.current('fall', mac);
           }
 
           const raw = getZone(t - r.lastSeen, r.smooth, tr.zone);
@@ -522,7 +537,8 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
 
   // Volunteers near the bracelet pick it up from Firestore
   const sendReport = async (m: FamMember, type: ReportType, description: string, photo: string | null) => {
-    const code = String(1000 + Math.floor(Math.random() * 9000));
+    // Handover code for children only: an elder can say who their family is
+    const code = m.kind === 'child' ? String(1000 + Math.floor(Math.random() * 9000)) : undefined;
     const r = {
       type,
       braceletId: m.mac ?? '',
@@ -537,7 +553,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     };
     try {
       const id = await createReport({ ...r, code });
-      setCodes((o) => ({ ...o, [m.id]: code }));
+      if (code) setCodes((o) => ({ ...o, [m.id]: code }));
       setReports((o) => ({
         ...o,
         [m.id]: { ...r, id, createdAt: Date.now(), status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null },
@@ -619,6 +635,17 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     setSos(null);
     Vibration.cancel();
   };
+  // Pressed by mistake: nothing reaches the volunteers
+  const cancelSos = (mac: string, who: string) => {
+    delete pendingSos.current[mac];
+    setSosPending({ ...pendingSos.current });
+    addLog('CANCELLED', who);
+    dismissSos();
+  };
+  const sendSosNow = (mac: string) => {
+    if (pendingSos.current[mac]) pendingSos.current[mac] = 0; // the next tick sends it
+  };
+  const sosLeft = sos && sosPending[sos.mac] !== undefined ? Math.max(0, Math.ceil((sosPending[sos.mac] - now) / 1000)) : null;
 
   const btOff = !!bt && bt !== State.PoweredOn;
   const liveOf = (m: FamMember) => (m.mac ? live[m.mac] : undefined);
@@ -1062,9 +1089,25 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
                 ? tr(`${sos.who} ما تحرك من فترة، تأكدوا منه`, `${sos.who} hasn’t moved for a while, check on them`)
                 : tr(`${sos.who} ضغط زر الطوارئ في السوار`, `${sos.who} pressed the bracelet’s emergency button`)}
             </Text>
-            <Pressable style={s.sosBtn} onPress={dismissSos}>
-              <Text style={s.sosBtnText}>{tr('تم الاستلام', 'Got it')}</Text>
-            </Pressable>
+            {sosLeft !== null ? (
+              <>
+                <Text style={s.sosCountdown}>
+                  {tr(`يوصل للمتطوعين القريبين بعد ${sosLeft} ث`, `Goes to nearby volunteers in ${sosLeft} s`)}
+                </Text>
+                <View style={s.sosRow}>
+                  <Pressable style={[s.sosBtn, { paddingHorizontal: 18 }]} onPress={() => cancelSos(sos.mac, sos.who)}>
+                    <Text style={s.sosBtnText}>{tr('ضغطة بالغلط، ألغِ', 'Mistake, cancel')}</Text>
+                  </Pressable>
+                  <Pressable style={[s.sosBtn, s.sosBtnGhost]} onPress={() => sendSosNow(sos.mac)}>
+                    <Text style={[s.sosBtnText, { color: '#fff' }]}>{tr('أرسل الحين', 'Send now')}</Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : (
+              <Pressable style={s.sosBtn} onPress={dismissSos}>
+                <Text style={s.sosBtnText}>{tr('تم الاستلام', 'Got it')}</Text>
+              </Pressable>
+            )}
           </FadeIn>
         )}
 
@@ -1304,6 +1347,9 @@ const s = StyleSheet.create({
   sosText: { color: '#FDECEA', fontSize: 14, marginTop: 4, textAlign: 'center' },
   sosBtn: { backgroundColor: '#fff', borderRadius: 14, paddingVertical: 11, paddingHorizontal: 34, marginTop: 14 },
   sosBtnText: { color: C.danger, fontSize: 16, fontWeight: '700' },
+  sosCountdown: { color: '#fff', fontSize: 15, fontWeight: '700', marginTop: 10, textAlign: 'center' },
+  sosRow: { flexDirection: 'row-reverse', gap: 10 },
+  sosBtnGhost: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: '#fff', paddingHorizontal: 18 },
 
   mapBox: { width: '100%', borderRadius: 24, overflow: 'hidden', backgroundColor: '#E5E1D6', justifyContent: 'center' },
   mapName: { backgroundColor: '#fff', borderWidth: 1.5, borderRadius: 10, paddingVertical: 2, paddingHorizontal: 8 },

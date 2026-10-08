@@ -275,6 +275,8 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 - The family sees the area and time where a volunteer last heard the bracelet (`reports/{id}/seen/last`), never the volunteer or their exact location
 - Reports carry `memberId`; the family app restores its open reports after a restart and closes orphans. Unlinking a bracelet closes its open report
 - Only one person runs Metro on a machine at a time: two `expo start` on the same folder stop each other
+- Emergency press: the family app waits 15 s (`SOS_DELAY_MS` in `FamilyApp.tsx`) before the report goes to volunteers, with "mistake, cancel" and "send now". A possible fall still goes at once
+- Handover code is for children only: elder reports have none, so the volunteer closes them without a code
 
 **Person 1: Bluetooth, bracelet and family app, final integration**
 
