@@ -9,6 +9,7 @@ import type { ClosedAs, Health, Report } from '../mock';
 
 export type NewReport = Omit<Report, 'id' | 'createdAt' | 'status' | 'assignedVolunteerId' | 'closedAs' | 'closedAt' | 'phone'> & {
   phone?: string | null;
+  code?: string; // handover code shown in the family app; the volunteer checks it before handing over
 };
 
 const reports = collection(db, 'reports');
@@ -19,14 +20,14 @@ const toReport = (d: DocumentSnapshot): Report => ({
   ...(d.data() as Omit<Report, 'id' | 'health' | 'phone'>), id: d.id, health: null, phone: null,
 });
 
-export async function createReport({ health, phone, ...r }: NewReport): Promise<string> {
+export async function createReport({ health, phone, code, ...r }: NewReport): Promise<string> {
   const ref = doc(reports);
   const batch = writeBatch(db);
   // familyId: the rules let only this family follow and close its report
   const familyId = auth.currentUser?.uid ?? null;
   batch.set(ref, { ...r, familyId, createdAt: Date.now(), status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null });
   if (health) batch.set(healthDoc(ref.id), health);
-  if (phone) batch.set(contactDoc(ref.id), { phone });
+  if (phone || code) batch.set(contactDoc(ref.id), { phone: phone ?? null, code: code ?? null });
   await batch.commit();
   return ref.id;
 }
@@ -62,9 +63,10 @@ export async function getReportHealth(id: string): Promise<Health | null> {
   return snap.exists() ? (snap.data() as Health) : null;
 }
 
-export async function getReportPhone(id: string): Promise<string | null> {
-  const snap = await getDoc(contactDoc(id));
-  return snap.exists() ? (snap.data().phone as string) : null;
+// Family phone and handover code, for the assigned volunteer
+export async function getReportContact(id: string): Promise<{ phone: string | null; code: string | null }> {
+  const d = (await getDoc(contactDoc(id))).data();
+  return { phone: d?.phone ?? null, code: d?.code ?? null };
 }
 
 // Closing wipes what was only needed for the search: health, phone and photo

@@ -2,7 +2,8 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { C, F, ui } from '../../theme';
-import { LANGUAGES, type Language, type Report, type ReportType } from '../../mock';
+import type { Language, Report, ReportType } from '../../mock';
+import { LanguagePicker } from '../../components/LanguagePicker';
 import { TYPE_UI, since } from './labels';
 
 export type Notice = { text: string; tone: 'safe' | 'warn' | 'danger' };
@@ -82,22 +83,7 @@ export default function DutyScreen(p: Props) {
       </View>
 
       <Text style={ui.caption}>اللغات اللي تتكلمها</Text>
-      <View style={s.langs}>
-        {(Object.keys(LANGUAGES) as Language[]).map((l) => {
-          const on = p.languages.includes(l);
-          return (
-            <Pressable
-              key={l}
-              onPress={() => p.onToggleLanguage(l)}
-              style={[s.lang, on && s.langOn]}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: on }}
-            >
-              <Text style={[s.langText, on && { color: '#fff' }]}>{LANGUAGES[l]}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      <LanguagePicker multi selected={p.languages} onPick={p.onToggleLanguage} />
       <Text style={s.langHint}>بلاغات من يتكلم لغتك توصلك أول</Text>
 
       <View style={s.stats}>
@@ -153,10 +139,6 @@ const s = StyleSheet.create({
   detailText: { color: C.muted, fontSize: F.small, textAlign: 'right', flex: 1 },
   locked: { color: C.warn, fontSize: 12.5, fontWeight: '600', textAlign: 'right', marginTop: 10 },
 
-  langs: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8 },
-  lang: { borderWidth: 1.5, borderColor: C.border, borderRadius: 20, paddingVertical: 7, paddingHorizontal: 13, backgroundColor: C.card },
-  langOn: { backgroundColor: C.primary, borderColor: C.primary },
-  langText: { color: C.text, fontSize: 13, fontWeight: '600' },
   langHint: { color: C.faint, fontSize: 12, textAlign: 'right', marginTop: 6 },
 
   stats: { flexDirection: 'row-reverse', gap: 12, marginTop: 14 },

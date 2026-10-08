@@ -10,7 +10,7 @@ import * as Location from 'expo-location';
 import { C, F, ui } from '../../theme';
 import type { ClosedAs, Language, PasserbyReport, Report } from '../../mock';
 import { auth } from '../../firebase';
-import { acceptReport, closeReport, getReportHealth, getReportPhone, subscribeOpenReports } from '../../firebase/reports';
+import { acceptReport, closeReport, getReportContact, getReportHealth, subscribeOpenReports } from '../../firebase/reports';
 import { areaOf, goOffDuty, goOnDuty, loadLanguages, saveLanguages, updateVolunteerLocation } from '../../firebase/volunteers';
 import { subscribePasserbyReports } from '../../firebase/passerby';
 import AlertCard from './AlertCard';
@@ -48,6 +48,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
   const [locationDenied, setLocationDenied] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [languages, setLanguages] = useState<Language[]>(['ar']);
+  const [handoverCode, setHandoverCode] = useState<string | null>(null); // of the active case, never shown
   const skipped = useRef(new Set<string>()); // reports this volunteer left for others: not shown again by itself
   const accepting = useRef<string | null>(null);
 
@@ -202,8 +203,12 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
         .then((health) => setActive((a) => (a && a.id === r.id ? { ...a, health } : a)))
         .catch(() => {})
         .finally(() => setHealthLoading(false));
-      getReportPhone(r.id)
-        .then((phone) => setActive((a) => (a && a.id === r.id ? { ...a, phone } : a)))
+      setHandoverCode(null);
+      getReportContact(r.id)
+        .then(({ phone, code }) => {
+          setActive((a) => (a && a.id === r.id ? { ...a, phone } : a));
+          setHandoverCode(code);
+        })
         .catch(() => {});
     } catch {
       setNotice({ text: 'تعذّر قبول البلاغ، تحقق من الإنترنت وحاول مرة ثانية', tone: 'danger' });
@@ -226,6 +231,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
     if (!active) return;
     setClosed((old) => [{ id: active.id, name: active.member.name, type: active.type, closedAs: as, at: Date.now() }, ...old]);
     setActive(null);
+    setHandoverCode(null);
     setPasserby([]);
     setHealthLoading(false);
     setStep('proximity');
@@ -356,7 +362,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
               goToLabel={active.type === 'lost' ? 'رجوع للبحث' : 'اتجه إليه'}
             />
           ) : (
-            <CloseCaseScreen report={active} onConfirm={closeCase} onCancel={() => setStep('proximity')} />
+            <CloseCaseScreen report={active} code={handoverCode} onConfirm={closeCase} onCancel={() => setStep('proximity')} />
           ))}
 
         {tab === 'history' && (

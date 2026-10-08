@@ -17,6 +17,7 @@ import { BottomNav } from '../../components/BottomNav';
 import { Button } from '../../components/Button';
 import { Header, HeaderButton, Pill } from '../../components/Header';
 import { latinDigits } from '../../components/digits';
+import { LanguagePicker } from '../../components/LanguagePicker';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { claimBracelet, releaseBracelet } from '../../firebase/bracelets';
@@ -183,6 +184,8 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   const [saving, setSaving] = useState(false);
   // Open reports per member id, kept live from Firestore
   const [reports, setReports] = useState<Record<string, Report>>({});
+  // Handover code per member id: the volunteer asks for it before handing them over
+  const [codes, setCodes] = useState<Record<string, string>>({});
   const [screen, setScreen] = useState<Screen>(null);
   const [justFound, setJustFound] = useState<string | null>(null);
   const [linkFor, setLinkFor] = useState<string | null>(null); // member whose link panel is open
@@ -432,6 +435,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
 
   // Volunteers near the bracelet pick it up from Firestore
   const sendReport = async (m: FamMember, type: ReportType, description: string, photo: string | null) => {
+    const code = String(1000 + Math.floor(Math.random() * 9000));
     const r = {
       type,
       braceletId: m.mac ?? '',
@@ -444,7 +448,8 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
       location: me,
     };
     try {
-      const id = await createReport(r);
+      const id = await createReport({ ...r, code });
+      setCodes((o) => ({ ...o, [m.id]: code }));
       setReports((o) => ({
         ...o,
         [m.id]: { ...r, id, createdAt: Date.now(), status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null },
@@ -624,7 +629,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         />
 
         <Text style={s.label}>لغته</Text>
-        {chips(LANGUAGES, draft.language, (language) => setDraft({ ...draft, language }))}
+        <LanguagePicker selected={[draft.language]} onPick={(language) => setDraft({ ...draft, language })} />
         <Text style={[s.hint, { marginTop: 6 }]}>المتطوع اللي يتكلم لغته يوصله البلاغ أول</Text>
 
         <Text style={s.label}>{draft.kind === 'child' ? 'رقم جوال ولي الأمر' : 'رقم جوال للتواصل (اختياري)'}</Text>
@@ -844,6 +849,13 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
               icon="megaphone-outline"
               text={report.status === 'searching' ? 'متطوع استلم البلاغ ويدور الحين' : 'البلاغ وصل للمتطوعين القريبين، ننتظر أحد يستلمه'}
             />
+            {codes[m.id] && (
+              <View style={s.codeBox}>
+                <Text style={s.codeLabel}>رمز التسليم</Text>
+                <Text style={s.code}>{codes[m.id]}</Text>
+                <Text style={s.codeHint}>قوله للمتطوع بس لما يسلّمك {m.name}. ما يسلّمه لأحد بدون هالرمز</Text>
+              </View>
+            )}
             <Button label="لقيناه" icon="checkmark-circle-outline" onPress={() => setScreen({ kind: 'found', memberId: m.id })} />
           </View>
         )}
@@ -1094,6 +1106,10 @@ const s = StyleSheet.create({
   actionText: { color: C.primary, fontSize: 13, fontWeight: '600' },
 
   techCard: { marginTop: 14, padding: 12, borderRadius: 14, backgroundColor: '#EEF5F4' },
+  codeBox: { alignItems: 'center', backgroundColor: '#EEF5F4', borderRadius: 14, padding: 12, marginBottom: 10 },
+  codeLabel: { color: C.muted, fontSize: 12, fontWeight: '600' },
+  code: { color: C.primary, fontSize: 30, fontWeight: '700', letterSpacing: 8, marginVertical: 2 },
+  codeHint: { color: C.muted, fontSize: 12, textAlign: 'center' },
   linkPanel: { marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border },
   formError: { color: C.danger, fontSize: 13, fontWeight: '600', textAlign: 'right', marginTop: 12 },
   techText: { color: C.primary, fontSize: 12, textAlign: 'right', marginBottom: 2 },
