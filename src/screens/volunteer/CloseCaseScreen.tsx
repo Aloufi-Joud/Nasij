@@ -1,4 +1,4 @@
-// Close case: "found" (handed to the family) or "handed to security".
+// Close case: handed to the family, helped on the spot (emergency press or fall only), or handed to security.
 // Closing deletes this volunteer's access to the bracelet and the medical data.
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -14,9 +14,12 @@ export default function CloseCaseScreen({ report: r, onConfirm, onCancel }: Prop
   const [choice, setChoice] = useState<ClosedAs | null>(null);
   const lost = r.type === 'lost';
   const sub: Record<ClosedAs, string> = {
-    found: lost ? 'الطفل الآن مع أهله' : 'وصلت إليه وهو بخير أو مع أهله',
-    security: lost ? 'سلّمته لنقطة الأمن ليتواصلوا مع أهله' : 'سلّمته للأمن أو للإسعاف',
+    found: lost ? 'تواصلت مع أهله وصار معهم' : 'وصل أهله وصار معهم',
+    helped: 'ساعدته وهو بخير، وما احتاج أحد يستلمه',
+    security: lost ? 'ما قدرت أوصل لأهله، سلّمته لنقطة الأمن' : 'سلّمته للأمن أو للإسعاف',
   };
+  // A lost child goes back to the family; an emergency press may only need a hand
+  const options: ClosedAs[] = lost ? ['found', 'security'] : ['helped', 'found', 'security'];
 
   return (
     <>
@@ -32,14 +35,14 @@ export default function CloseCaseScreen({ report: r, onConfirm, onCancel }: Prop
 
       <Text style={ui.caption}>كيف انتهى البلاغ؟</Text>
       <View style={{ gap: 10 }}>
-        {(['found', 'security'] as ClosedAs[]).map((k) => {
+        {options.map((k) => {
           const on = choice === k;
           const u = CLOSED_UI[k];
           return (
             <Pressable
               key={k}
               onPress={() => setChoice(k)}
-              style={[s.option, on && { borderColor: u.color, backgroundColor: k === 'found' ? C.safeBg : C.techBg }]}
+              style={[s.option, on && { borderColor: u.color, backgroundColor: k === 'security' ? C.techBg : C.safeBg }]}
               accessibilityRole="radio"
               accessibilityState={{ selected: on }}
             >

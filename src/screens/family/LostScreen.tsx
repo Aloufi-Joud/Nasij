@@ -12,10 +12,11 @@ const FAKE_PHOTO = reports[0].photo;
 
 export default function LostScreen(p: {
   name: string;
+  initial: string; // description saved with the member, editable here
   onSend: (description: string, photo: string | null) => void;
   onCancel: () => void;
 }) {
-  const [description, setDescription] = useState('');
+  const [description, setDescription] = useState(p.initial);
   const [photo, setPhoto] = useState<string | null>(null);
   const ready = !!description.trim();
 

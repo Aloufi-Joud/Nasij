@@ -17,10 +17,12 @@ service cloud.firestore {
       allow write: if signedIn() && me() == uid && request.resource.data.role in ['family', 'volunteer'];
     }
 
-    // One member per family account, health included: the family and security only
-    match /members/{familyId} {
-      allow read: if signedIn() && (me() == familyId || isSecurity());
-      allow write: if signedIn() && me() == familyId;
+    // Members of a family (several per account), health and phone included: the family and security only
+    match /members/{id} {
+      allow read: if signedIn() && (resource.data.familyId == me() || isSecurity());
+      allow create: if signedIn() && request.resource.data.familyId == me();
+      allow update: if signedIn() && resource.data.familyId == me() && request.resource.data.familyId == me();
+      allow delete: if signedIn() && resource.data.familyId == me();
     }
 
     // Bracelet lock: one family per bracelet per visit
@@ -53,8 +55,8 @@ service cloud.firestore {
             && changes(['status', 'closedAs', 'closedAt', 'photo']))
       );
 
-      // Health: the family, the assigned volunteer and security only
-      match /private/health {
+      // Health and the family phone: the family, the assigned volunteer and security only
+      match /private/{doc} {
         function report() { return get(/databases/$(database)/documents/reports/$(id)).data; }
         // created in the same batch as the report, so read the report as it will be
         allow create: if signedIn() && getAfter(/databases/$(database)/documents/reports/$(id)).data.familyId == me();

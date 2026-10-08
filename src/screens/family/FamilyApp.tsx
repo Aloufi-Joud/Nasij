@@ -1,4 +1,4 @@
-// Nasij family app: find the bracelet, measure signal, alert when it moves away
+// Nasij family app: several members, one bracelet each. Measures each signal and alerts when one moves away.
 // Same logic as the tested laptop scanner (nasij_scanner.py)
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, Vibration, View } from 'react-native';
@@ -7,7 +7,7 @@ import { State, type Device } from 'react-native-ble-plx';
 import MapView, { Circle } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { C, ui } from '../../theme';
-import type { Kind, Point, Report, ReportType } from '../../mock';
+import { LANGUAGES, MAX_AGE, type Gender, type Kind, type Language, type Member, type Point, type Report, type ReportType } from '../../mock';
 import { metresBetween } from '../../components/geo';
 import { PAIR_RSSI, newPairing, pairStep, type Pairing } from '../../ble/pairing';
 import { listen, onBluetoothState } from '../../ble/scanner';
@@ -20,13 +20,11 @@ import { latinDigits } from '../../components/digits';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { claimBracelet, releaseBracelet } from '../../firebase/bracelets';
-import { deleteMember, loadMember, saveMember } from '../../firebase/members';
+import { deleteMember, loadMembers, saveMember } from '../../firebase/members';
 import { closeReport, createReport, subscribeReport } from '../../firebase/reports';
 import FoundScreen from './FoundScreen';
 import LostScreen from './LostScreen';
 
-// Linked bracelet number (MAC, printed under the QR on the back). Set in the app.
-let linkedMac: string | null = null;
 const NEAR = -65;           // stronger than this = near
 const FAR = -80;            // weaker than this = far
 const HOLD_MS = 3000;       // a new state must last 3 s before we show it
@@ -40,23 +38,51 @@ const EVENT_RADIUS_M = 150;
 
 type Zone = 'NEAR' | 'MEDIUM' | 'FAR' | 'LOST';
 type LogKind = Zone | 'SOS' | 'FALL' | 'REPORT' | 'FOUND' | 'EDGE';
-type PairView = { mac: string; heard: boolean; near: boolean; timedOut: boolean };
+type PairView = { memberId: string; mac: string; heard: boolean; near: boolean; timedOut: boolean };
 type AlertKind = 'SOS' | 'FALL';
 
-// The person wearing the bracelet, entered by the family in the app
-// ponytail: local form shape (age as text, health as two fields); becomes mock.ts Member with Firebase
-type Member = { name: string; kind: Kind; age: string; condition: string; notes: string };
-const EMPTY: Member = { name: '', kind: 'child', age: '', condition: '', notes: '' };
+// A member as the family edits it (age and phone as typed), plus the linked bracelet
+type Form = {
+  name: string; kind: Kind; gender: Gender; age: string; language: Language;
+  phone: string; description: string; condition: string; notes: string;
+};
+type FamMember = Form & { id: string; mac: string | null };
+const EMPTY: Form = {
+  name: '', kind: 'child', gender: 'male', age: '', language: 'ar', phone: '', description: '', condition: '', notes: '',
+};
 const KIND_UI: Record<Kind, { label: string; color: string }> = {
   child: { label: 'طفل', color: C.child },
   elder: { label: 'كبير سن', color: C.elder },
 };
+const GENDER_UI: Record<Gender, string> = { male: 'ذكر', female: 'أنثى' };
+
+// Older member documents miss the newer fields
+const fromDoc = (m: Member): FamMember => ({
+  id: m.id, name: m.name, kind: m.kind, gender: m.gender ?? 'male', age: m.age ? String(m.age) : '',
+  language: m.language ?? 'ar', phone: m.phone ?? '', description: m.description ?? '',
+  condition: m.health?.condition ?? '', notes: m.health?.notes ?? '', mac: m.braceletId,
+});
+const toDoc = (m: Form & { id?: string; mac: string | null }) => ({
+  id: m.id, name: m.name, kind: m.kind, gender: m.gender, age: Number(m.age) || 0, language: m.language,
+  phone: m.phone || null, description: m.description,
+  health: m.condition ? { condition: m.condition, notes: m.notes } : null, braceletId: m.mac,
+});
+
+// What stops the form from saving, or null. A child needs a parent's phone: the volunteer calls it.
+function formError(f: Form): string | null {
+  if (!f.name.trim()) return 'اكتب الاسم';
+  if (!f.age) return 'اكتب العمر';
+  if (Number(f.age) > MAX_AGE[f.kind]) return `العمر لازم يكون ${MAX_AGE[f.kind]} سنة أو أقل لـ${KIND_UI[f.kind].label}`;
+  if (f.kind === 'child' && !f.phone) return 'اكتب رقم جوال ولي الأمر';
+  if (f.phone && !/^\d{9,15}$/.test(f.phone)) return 'رقم الجوال غير صحيح';
+  return null;
+}
 
 const ZONE_UI: Record<LogKind, { label: string; color: string }> = {
   SOS: { label: 'طلب مساعدة', color: C.danger },
   FALL: { label: 'احتمال سقوط', color: C.danger },
-  REPORT: { label: 'بلاغ ضياع للمتطوعين', color: C.danger },
-  FOUND: { label: 'تم العثور عليه وانقفل البلاغ', color: C.safe },
+  REPORT: { label: 'بلاغ للمتطوعين', color: C.danger },
+  FOUND: { label: 'انقفل البلاغ', color: C.safe },
   EDGE: { label: 'قرب حدود الفعالية', color: C.danger },
   NEAR: { label: 'قريب منك', color: C.safe },
   MEDIUM: { label: 'مسافة متوسطة', color: C.warn },
@@ -80,18 +106,43 @@ function bars(smooth: number) {
   return 0;
 }
 
-// Phone-side IDs of devices already confirmed as our bracelet
-const knownIds = new Set<string>();
+// Everything known about one linked bracelet, fed by every packet and read by the 500 ms timer
+type Track = {
+  history: number[];
+  latest: Signal | null;
+  // Latest alarm info per slot: 0x21 = double press, 0x23 = no movement (possible fall)
+  alarm: Record<number, { triggered: boolean; count: number }>;
+  lastCount: Record<number, number>;
+  wasTriggered: Record<number, boolean>;
+  zone: Zone | null;
+  candidate: { zone: Zone | null; since: number };
+  radius: number; // while lost, keeps the last known circle
+  edge: boolean;
+};
+const newTrack = (): Track => ({
+  history: [], latest: null, alarm: {}, lastCount: {}, wasTriggered: {}, zone: null, candidate: { zone: null, since: 0 }, radius: 10, edge: false,
+});
+// What the screen shows per bracelet, copied from the tracks twice a second
+type Live = { signal: Signal | null; zone: Zone | null; radius: number; edge: boolean };
 
-// Returns the linked bracelet's number, or null if this is not it
+// Linked bracelets this visit, by number (MAC), and phone-side ids already matched to one
+const tracks: Record<string, Track> = {};
+const knownIds = new Map<string, string>();
+
+// Returns the number of the linked bracelet this packet is from, or null
 function identify(device: Device): string | null {
-  if (!linkedMac) return null;
-  if (knownIds.has(device.id)) return linkedMac;
-  if (braceletMac(device) === linkedMac) {
-    knownIds.add(device.id);
-    return linkedMac;
+  const known = knownIds.get(device.id);
+  if (known && tracks[known]) return known;
+  const mac = braceletMac(device);
+  if (mac && tracks[mac]) {
+    knownIds.set(device.id, mac);
+    return mac;
   }
   return null;
+}
+function forget(mac: string) {
+  delete tracks[mac];
+  for (const [id, m] of knownIds) if (m === mac) knownIds.delete(id);
 }
 
 function getZone(ageMs: number, smooth: number, current: Zone | null): Zone {
@@ -118,46 +169,45 @@ const CIRCLE_FILL: Record<Zone, string> = {
 };
 
 type Tab = 'home' | 'map' | 'alerts';
-type Screen = 'lost' | 'found' | null;
+type Screen = { kind: 'lost' | 'found'; memberId: string } | null;
 
 export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: () => void; onLogout: () => void }) {
   const [bt, setBt] = useState<string>('');
-  const [reading, setReading] = useState<Signal | null>(null);
-  const [zone, setZone] = useState<Zone | null>(null);
-  const [log, setLog] = useState<{ time: string; zone: LogKind }[]>([]);
-  const [sos, setSos] = useState<AlertKind | null>(null);
+  const [log, setLog] = useState<{ time: string; kind: LogKind; who: string }[]>([]);
+  const [sos, setSos] = useState<{ kind: AlertKind; who: string } | null>(null);
   const [tab, setTab] = useState<Tab>('home');
-  const [member, setMember] = useState<Member | null>(null);
-  const [editing, setEditing] = useState(true);
-  const [draft, setDraft] = useState<Member>(EMPTY);
-  // Open "my child is lost" report, kept live from Firestore
-  const [report, setReport] = useState<Report | null>(null);
+  const [members, setMembers] = useState<FamMember[]>([]);
+  // 'new' = adding a member, an id = editing that member, null = form closed. First visit: the form is open.
+  const [editing, setEditing] = useState<string | null>('new');
+  const [draft, setDraft] = useState<Form>(EMPTY);
+  const [saving, setSaving] = useState(false);
+  // Open reports per member id, kept live from Firestore
+  const [reports, setReports] = useState<Record<string, Report>>({});
   const [screen, setScreen] = useState<Screen>(null);
-  const [justFound, setJustFound] = useState(false);
-  const [mac, setMac] = useState<string | null>(null);
+  const [justFound, setJustFound] = useState<string | null>(null);
+  const [linkFor, setLinkFor] = useState<string | null>(null); // member whose link panel is open
   const [typedMac, setTypedMac] = useState('');
-  const nearby = useRef<Record<string, { rssi: number; seen: number }>>({});
-  // Latest alarm info per bracelet slot: 0x21 = double press, 0x23 = no movement (possible fall)
-  const alarm = useRef<Record<number, { triggered: boolean; count: number }>>({});
-  const lastCount = useRef<Record<number, number>>({});
+  const [live, setLive] = useState<Record<string, Live>>({});
   const [now, setNow] = useState(() => Date.now());
   const [me, setMe] = useState<Point | null>(null);
   const [eventCenter, setEventCenter] = useState<Point | null>(null);
-  // While lost, keep showing the last known circle
-  const [radius, setRadius] = useState(10);
   const [nearbyList, setNearbyList] = useState<[string, { rssi: number; seen: number }][]>([]);
-  const pairing = useRef<Pairing | null>(null);
-  const autoReport = useRef<(type: 'emergency' | 'fall') => void>(() => {});
   const [pairView, setPairView] = useState<PairView | null>(null);
-
-  const latest = useRef<Signal | null>(null);
+  const nearby = useRef<Record<string, { rssi: number; seen: number }>>({});
+  const pairing = useRef<{ memberId: string; p: Pairing } | null>(null);
+  const autoReport = useRef<(type: 'emergency' | 'fall', mac: string) => void>(() => {});
+  const link = useRef<(memberId: string, mac: string) => void>(() => {});
+  const membersRef = useRef<FamMember[]>([]);
+  const meRef = useRef<Point | null>(null);
+  const centerRef = useRef<Point | null>(null);
   const sosRef = useRef(false);
-  const wasTriggered = useRef<Record<number, boolean>>({});
-  const history = useRef<number[]>([]);
-  const zoneRef = useRef<Zone | null>(null);
-  const candidate = useRef<{ zone: Zone | null; since: number }>({ zone: null, since: 0 });
 
-  // Parent's own location (the circle is drawn around it)
+  // The scan timer reads the latest members through a ref
+  useEffect(() => {
+    membersRef.current = members;
+  });
+
+  // Parent's own location (the circles are drawn around it)
   useEffect(() => {
     let watch: Location.LocationSubscription | null = null;
     (async () => {
@@ -167,59 +217,47 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         { accuracy: Location.Accuracy.High, distanceInterval: 1 },
         (pos) => {
           const p = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+          meRef.current = p;
+          centerRef.current ??= p;
           setMe(p);
-          setEventCenter((c) => c ?? p);
+          setEventCenter(centerRef.current);
         },
       );
     })();
     return () => watch?.remove();
   }, []);
 
-  const addLog = (kind: LogKind) =>
-    setLog((old) => [{ time: new Date().toLocaleTimeString(), zone: kind }, ...old].slice(0, 20));
-
-  const link = (m: string) => {
-    linkedMac = m;
-    knownIds.clear();
-    history.current = [];
-    latest.current = null;
-    alarm.current = {};
-    lastCount.current = {};
-    wasTriggered.current = {};
-    zoneRef.current = null;
-    setZone(null);
-    setReading(null);
-    setMac(m);
-    setTypedMac('');
-  };
+  const addLog = (kind: LogKind, who: string) =>
+    setLog((old) => [{ time: new Date().toLocaleTimeString(), kind, who }, ...old].slice(0, 30));
 
   useEffect(() => {
+    const nameOf = (mac: string) => membersRef.current.find((m) => m.mac === mac)?.name ?? '';
     const stopState = onBluetoothState(setBt);
     const stopScan = listen((device) => {
       if (device.rssi == null) return;
-      // Remember nearby bracelets for the link screen
+      // Remember nearby bracelets for the link panel
       const mac = braceletMac(device);
       if (mac) nearby.current[mac] = { rssi: device.rssi, seen: Date.now() };
 
       // Linking: wait for a new double press from that bracelet while it is held close
-      if (pairing.current) pairStep(pairing.current, device.id, mac, device.rssi, parseAlarm(device));
+      if (pairing.current) pairStep(pairing.current.p, device.id, mac, device.rssi, parseAlarm(device));
 
-      if (!identify(device)) return;
+      const linked = identify(device);
+      if (!linked) return;
+      const tr = tracks[linked];
       const a = parseAlarm(device);
-      if (a && (a.frame === 0x21 || a.frame === 0x23)) alarm.current[a.frame] = { triggered: a.triggered, count: a.count };
+      if (a && (a.frame === 0x21 || a.frame === 0x23)) tr.alarm[a.frame] = { triggered: a.triggered, count: a.count };
       const t = Date.now();
       // Coming back after being lost: start the average fresh
-      if (latest.current && t - latest.current.lastSeen > LOST_AFTER_MS) history.current = [];
-      history.current = [...history.current, device.rssi].slice(-WINDOW);
-      latest.current = { rssi: device.rssi, ...summarize(history.current), lastSeen: t };
+      if (tr.latest && t - tr.latest.lastSeen > LOST_AFTER_MS) tr.history = [];
+      tr.history = [...tr.history, device.rssi].slice(-WINDOW);
+      tr.latest = { rssi: device.rssi, ...summarize(tr.history), lastSeen: t };
     });
 
-    // Twice a second: decide the zone and refresh the screen
+    // Twice a second: decide each bracelet's zone and refresh the screen
     const timer = setInterval(() => {
-      const r = latest.current;
       const t = Date.now();
       setNow(t);
-      setReading(r);
       // Bracelets heard in the last 5 s, strongest (closest) first
       setNearbyList(
         Object.entries(nearby.current)
@@ -228,64 +266,78 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
           .slice(0, 4),
       );
 
-      const p = pairing.current;
-      if (p?.pressed) {
+      const pr = pairing.current;
+      if (pr?.p.pressed) {
         pairing.current = null;
         setPairView(null);
         // Server-side lock: one family per bracelet per visit
-        claimBracelet(p.mac)
-          .then((ok) => (ok ? link(p.mac) : Alert.alert('السوار مرتبط بعائلة ثانية', 'ما يمكن ربطه حتى تنهي العائلة زيارتها.')))
+        claimBracelet(pr.p.mac)
+          .then((ok) =>
+            ok ? link.current(pr.memberId, pr.p.mac) : Alert.alert('السوار مرتبط بعائلة ثانية', 'ما يمكن ربطه حتى تنهي العائلة زيارتها.'),
+          )
           .catch(() => failed('تعذر ربط السوار'));
-      } else if (p) {
+      } else if (pr) {
         setPairView({
-          mac: p.mac,
-          heard: p.rssi !== null,
-          near: p.rssi !== null && p.rssi >= PAIR_RSSI,
-          timedOut: t - p.since > PAIR_TIMEOUT_MS,
+          memberId: pr.memberId,
+          mac: pr.p.mac,
+          heard: pr.p.rssi !== null,
+          near: pr.p.rssi !== null && pr.p.rssi >= PAIR_RSSI,
+          timedOut: t - pr.p.since > PAIR_TIMEOUT_MS,
         });
       }
 
-      if (!r) return;
+      const next: Record<string, Live> = {};
+      for (const [mac, tr] of Object.entries(tracks)) {
+        const r = tr.latest;
+        if (r) {
+          const who = nameOf(mac);
+          // Emergencies: 0x21 = double press, 0x23 = bracelet stopped moving (possible fall).
+          // Alert only on a NEW event: the count goes up, or the alarm flag turns on.
+          // The flag stays on for the whole alarm broadcast, so we ignore it while it
+          // stays on, otherwise "تم الاستلام" would bring the alert right back.
+          for (const [frame, kind] of [[0x21, 'SOS'], [0x23, 'FALL']] as const) {
+            const a = tr.alarm[frame];
+            if (!a) continue;
+            const prev = tr.lastCount[frame];
+            const firstSeen = prev === undefined;
+            const isNew = (!firstSeen && a.count > prev) || (!firstSeen && a.triggered && !tr.wasTriggered[frame]);
+            tr.lastCount[frame] = Math.max(a.count, prev ?? 0);
+            tr.wasTriggered[frame] = a.triggered;
+            if (!isNew) continue;
+            // Always log it, even if another alert is already on screen
+            addLog(kind, who);
+            Vibration.vibrate([0, 800, 300, 800, 300, 800]);
+            if (!sosRef.current) {
+              sosRef.current = true;
+              setSos({ kind, who });
+            }
+            // Journey step 5: the alert also reaches the nearest volunteer
+            autoReport.current(kind === 'SOS' ? 'emergency' : 'fall', mac);
+          }
 
-      // Emergencies: 0x21 = double press, 0x23 = bracelet stopped moving (possible fall).
-      // Alert only on a NEW event: the count goes up, or the alarm flag turns on.
-      // The flag stays on for the whole alarm broadcast, so we ignore it while it
-      // stays on, otherwise "تم الاستلام" would bring the alert right back.
-      for (const [frame, kind] of [[0x21, 'SOS'], [0x23, 'FALL']] as const) {
-        const a = alarm.current[frame];
-        if (!a) continue;
-        const prev = lastCount.current[frame];
-        const firstSeen = prev === undefined;
-        const isNew =
-          (!firstSeen && a.count > prev) || (!firstSeen && a.triggered && !wasTriggered.current[frame]);
-        lastCount.current[frame] = Math.max(a.count, prev ?? 0);
-        wasTriggered.current[frame] = a.triggered;
-        if (!isNew) continue;
-        // Always log it, even if another alert is already on screen
-        addLog(kind);
-        Vibration.vibrate([0, 800, 300, 800, 300, 800]);
-        if (!sosRef.current) {
-          sosRef.current = true;
-          setSos(kind);
+          const raw = getZone(t - r.lastSeen, r.smooth, tr.zone);
+          if (raw !== tr.candidate.zone) tr.candidate = { zone: raw, since: t };
+          const confirmed = tr.zone === null || raw === 'LOST' || t - tr.candidate.since >= HOLD_MS ? raw : tr.zone;
+          if (confirmed !== 'LOST') tr.radius = estimateMetres(r.smooth);
+          if (confirmed !== tr.zone) {
+            tr.zone = confirmed;
+            addLog(confirmed, who);
+            if (confirmed === 'FAR' || confirmed === 'LOST') Vibration.vibrate([0, 500, 200, 500]);
+          }
+
+          // Where the bracelet can be: within `radius` of the family. Warn once when that circle reaches the event edge.
+          const meP = meRef.current;
+          const c = centerRef.current;
+          const edge = !!(meP && c && metresBetween(c, meP) + tr.radius > EVENT_RADIUS_M);
+          if (edge && !tr.edge) {
+            addLog('EDGE', who);
+            Vibration.vibrate([0, 500, 200, 500]);
+          }
+          tr.edge = edge;
         }
-        // Journey step 5: the alert also reaches the nearest volunteer
-        autoReport.current(kind === 'SOS' ? 'emergency' : 'fall');
+        next[mac] = { signal: r, zone: tr.zone, radius: tr.radius, edge: tr.edge };
       }
-
-      const raw = getZone(t - r.lastSeen, r.smooth, zoneRef.current);
-      if (raw !== candidate.current.zone) candidate.current = { zone: raw, since: t };
-      const confirmed =
-        zoneRef.current === null || raw === 'LOST' || t - candidate.current.since >= HOLD_MS
-          ? raw
-          : zoneRef.current;
-
-      if (confirmed !== 'LOST') setRadius(estimateMetres(r.smooth));
-      if (confirmed !== zoneRef.current) {
-        zoneRef.current = confirmed;
-        setZone(confirmed);
-        addLog(confirmed);
-        if (confirmed === 'FAR' || confirmed === 'LOST') Vibration.vibrate([0, 500, 200, 500]);
-      }
+      setLive(next);
     }, 500);
 
     return () => {
@@ -295,123 +347,137 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     };
   }, []);
 
-  const lost = zone === 'LOST';
-  const zoneUi = zone ? ZONE_UI[zone] : null;
-  const strength = reading && !lost ? bars(reading.smooth) : 0;
-  const ago = reading ? Math.round((now - reading.lastSeen) / 1000) : 0;
-  const btOff = !!bt && bt !== State.PoweredOn;
-  // Where the bracelet can be: within `radius` of the family. Warn when that circle reaches the event edge.
-  const nearEdge = !!(reading && me && eventCenter && metresBetween(eventCenter, me) + radius > EVENT_RADIUS_M);
-  const warn = zone === 'MEDIUM' || zone === 'FAR' || lost || nearEdge;
-
-  const who = member?.name || 'الفرد';
-  const memberColor = member ? KIND_UI[member.kind].color : C.faint;
-  const memberRole = member
-    ? `${KIND_UI[member.kind].label}${member.age ? ` · ${member.age} سنة` : ''}`
-    : '';
-
-  // The member saved last time on this account comes back after login
+  // The members saved on this account come back after login, with their bracelets
   useEffect(() => {
-    loadMember()
-      .then((m) => {
-        if (!m) return;
-        const form = { name: m.name, kind: m.kind, age: m.age ? String(m.age) : '', condition: m.health?.condition ?? '', notes: m.health?.notes ?? '' };
-        setMember(form);
-        setDraft(form);
-        setEditing(false);
+    loadMembers()
+      .then((list) => {
+        for (const m of list) if (m.braceletId) tracks[m.braceletId] = tracks[m.braceletId] ?? newTrack();
+        setMembers(list.map(fromDoc));
+        if (list.length) setEditing(null);
       })
       .catch(() => {});
   }, []);
 
-  const saveDraft = () => {
-    if (!draft.name.trim()) return;
-    const m = { ...draft, name: draft.name.trim(), condition: draft.condition.trim(), notes: draft.notes.trim() };
-    setMember(m);
-    setEditing(false);
-    saveMember({
-      name: m.name,
-      kind: m.kind,
-      age: Number(m.age) || 0,
-      health: m.condition ? { condition: m.condition, notes: m.notes } : null,
-      braceletId: mac,
-    }).catch(() => failed('تعذر حفظ البيانات'));
+  const save = (m: FamMember) =>
+    saveMember(toDoc(m)).catch(() => {
+      failed('تعذر حفظ البيانات');
+      return m.id;
+    });
+
+  const saveDraft = async () => {
+    if (formError(draft) || saving) return;
+    const f = { ...draft, name: draft.name.trim(), description: draft.description.trim(), condition: draft.condition.trim(), notes: draft.notes.trim() };
+    const old = members.find((m) => m.id === editing);
+    setSaving(true);
+    try {
+      if (old) {
+        const m = { ...old, ...f };
+        setMembers((list) => list.map((x) => (x.id === m.id ? m : x)));
+        setEditing(null);
+        await save(m);
+      } else {
+        const id = await saveMember(toDoc({ ...f, mac: null }));
+        setMembers((list) => [...list, { ...f, id, mac: null }]);
+        setEditing(null);
+        setLinkFor(id); // next step: link a bracelet to the new member
+      }
+    } catch {
+      failed('تعذر حفظ البيانات');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  // Log and vibrate once each time the bracelet reaches the event edge
-  const [wasNearEdge, setWasNearEdge] = useState(false);
-  if (nearEdge !== wasNearEdge) {
-    setWasNearEdge(nearEdge);
-    if (nearEdge) addLog('EDGE');
-  }
   useEffect(() => {
-    if (nearEdge) Vibration.vibrate([0, 500, 200, 500]);
-  }, [nearEdge]);
+    link.current = (memberId, mac) => {
+      tracks[mac] = newTrack();
+      const m = members.find((x) => x.id === memberId);
+      if (!m) return;
+      const linked = { ...m, mac };
+      setMembers((list) => list.map((x) => (x.id === memberId ? linked : x)));
+      setLinkFor(null);
+      setTypedMac('');
+      save(linked);
+    };
+  });
 
-  // Follow the open report live: a volunteer takes it, or closes it as found
-  const reportId = report?.id;
+  const unlink = (m: FamMember) => {
+    if (!m.mac) return Promise.resolve();
+    const mac = m.mac;
+    forget(mac);
+    const free = { ...m, mac: null };
+    setMembers((list) => list.map((x) => (x.id === m.id ? free : x)));
+    return Promise.allSettled([releaseBracelet(mac), save(free)]);
+  };
+
+  // Follow the open reports live: a volunteer takes one, or closes it
+  const openIds = Object.entries(reports)
+    .map(([memberId, r]) => `${memberId}:${r.id}`)
+    .join(',');
   useEffect(() => {
-    if (!reportId) return;
-    return subscribeReport(reportId, (r) => {
-      if (r?.status !== 'closed') return setReport(r);
-      setReport(null);
-      setScreen(null);
-      setJustFound(true);
-      addLog('FOUND');
+    if (!openIds) return;
+    const stops = openIds.split(',').map((pair) => {
+      const [memberId, reportId] = pair.split(':');
+      return subscribeReport(reportId, (r) => {
+        if (r && r.status !== 'closed') return setReports((o) => ({ ...o, [memberId]: r }));
+        setReports(({ [memberId]: _, ...rest }) => rest);
+        setScreen((s) => (s?.memberId === memberId ? null : s));
+        if (!r) return;
+        setJustFound(r.member.name);
+        addLog('FOUND', r.member.name);
+      });
     });
-  }, [reportId]);
+    return () => stops.forEach((stop) => stop());
+  }, [openIds]);
 
   // Volunteers near the bracelet pick it up from Firestore
-  const sendReport = async (type: ReportType, description: string, photo: string | null) => {
-    if (!member) return;
+  const sendReport = async (m: FamMember, type: ReportType, description: string, photo: string | null) => {
     const r = {
       type,
-      braceletId: mac ?? '',
-      member: { name: member.name, kind: member.kind, age: Number(member.age) || 0 },
+      braceletId: m.mac ?? '',
+      member: { name: m.name, kind: m.kind, age: Number(m.age) || 0, gender: m.gender, language: m.language },
       photo,
       description,
-      health: member.condition ? { condition: member.condition, notes: member.notes } : null,
+      health: m.condition ? { condition: m.condition, notes: m.notes } : null,
+      phone: m.phone || null,
       area: 'قرب موقع العائلة',
       location: me,
     };
     try {
       const id = await createReport(r);
-      setReport({ ...r, id, createdAt: Date.now(), status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null });
+      setReports((o) => ({
+        ...o,
+        [m.id]: { ...r, id, createdAt: Date.now(), status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null },
+      }));
       setScreen(null);
-      setJustFound(false);
-      addLog('REPORT');
+      setJustFound(null);
+      addLog('REPORT', m.name);
     } catch {
       failed('تعذر إرسال البلاغ');
     }
   };
-  // Called from the scan timer, so it reads this render's member and report through a ref.
-  // One open report at a time: a second press while a case is open adds nothing.
+  // Called from the scan timer, so it reads this render's members and reports through a ref.
+  // One open report per member: a second press while their case is open adds nothing.
+  // The description is how the family said to recognise them, never the alarm itself.
   useEffect(() => {
-    autoReport.current = (type) => {
-      if (!report) sendReport(type, type === 'fall' ? 'سقوط محتمل: السوار توقف عن الحركة' : 'ضغط زر الطوارئ في السوار', null);
+    autoReport.current = (type, mac) => {
+      const m = members.find((x) => x.mac === mac);
+      if (m && !reports[m.id]) sendReport(m, type, m.description, null);
     };
   });
 
-  // Closing also deletes the photo and health data; the live report then shows "found"
-  const confirmFound = () => {
-    if (!report) return;
-    closeReport(report.id, 'found').catch(() => failed('تعذر إغلاق البلاغ'));
-  };
-  const unlink = () => {
-    const release = linkedMac ? releaseBracelet(linkedMac) : Promise.resolve();
-    linkedMac = null;
-    knownIds.clear();
-    latest.current = null;
-    zoneRef.current = null;
-    setZone(null);
-    setReading(null);
-    setMac(null);
-    return release;
+  // Closing also deletes the photo, health and phone; the live report then shows "found"
+  const confirmFound = (memberId: string) => {
+    const r = reports[memberId];
+    if (r) closeReport(r.id, 'found').catch(() => failed('تعذر إغلاق البلاغ'));
   };
 
   // Linking starts here: the bracelet is linked only after the press check passes
-  const startPair = (m: string) => {
-    pairing.current = newPairing(m, Date.now());
-    setPairView({ mac: m, heard: false, near: false, timedOut: false });
+  const startPair = (memberId: string, mac: string) => {
+    const other = members.find((m) => m.mac === mac && m.id !== memberId);
+    if (other) return Alert.alert('السوار مربوط', `هذا السوار مربوط بـ${other.name}، فكّه منه أول.`);
+    pairing.current = { memberId, p: newPairing(mac, now) };
+    setPairView({ memberId, mac, heard: false, near: false, timedOut: false });
     setTypedMac('');
   };
   const cancelPair = () => {
@@ -419,34 +485,32 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     setPairView(null);
   };
 
-  // Delete the member completely, here and in Firestore: details, health,
-  // bracelet lock and any open report
-  // Resolves once Firestore is done, so "end of visit" signs out only after the deletes
-  const clearMember = () => {
-    const done = Promise.allSettled([unlink(), deleteMember(), report && closeReport(report.id, 'found')]);
-    cancelPair();
-    setMember(null);
-    setDraft(EMPTY);
-    setEditing(true);
-    setReport(null);
-    setScreen(null);
-    setJustFound(false);
+  // Delete a member completely, here and in Firestore: details, health, bracelet lock and any open report.
+  // Resolves once Firestore is done, so "end of visit" signs out only after the deletes.
+  const clearMember = (m: FamMember) => {
+    const r = reports[m.id];
+    const done = Promise.allSettled([unlink(m), deleteMember(m.id), r && closeReport(r.id, 'found')]);
+    if (pairing.current?.memberId === m.id) cancelPair();
+    setMembers((list) => list.filter((x) => x.id !== m.id));
+    setReports(({ [m.id]: _, ...rest }) => rest);
+    setScreen((s) => (s?.memberId === m.id ? null : s));
+    if (editing === m.id) setEditing(null);
     return done;
   };
-  const removeMember = () =>
-    Alert.alert(`حذف ${who}؟`, 'بتنحذف بياناته وحالته الصحية، وينفك ربط السوار، وينقفل أي بلاغ مفتوح.', [
+  const removeMember = (m: FamMember) =>
+    Alert.alert(`حذف ${m.name}؟`, 'بتنحذف بياناته وحالته الصحية، وينفك ربط السوار، وينقفل أي بلاغ مفتوح.', [
       { text: 'إلغاء', style: 'cancel' },
-      { text: 'حذف', style: 'destructive', onPress: clearMember },
+      { text: 'حذف', style: 'destructive', onPress: () => clearMember(m) },
     ]);
-  // Leaving the event: nothing about the family stays behind, and the bracelet is free for the next visitor
+  // Leaving the event: nothing about the family stays behind, and the bracelets are free for the next visitors
   const endVisit = () =>
-    Alert.alert('إنهاء الزيارة؟', 'بتنحذف كل بيانات العائلة والحالة الصحية، وينفك ربط السوار، وتطلع من حسابك.', [
+    Alert.alert('إنهاء الزيارة؟', 'بتنحذف كل بيانات العائلة والحالة الصحية، وتنفك كل الأساور، وتطلع من حسابك.', [
       { text: 'إلغاء', style: 'cancel' },
       {
         text: 'إنهاء الزيارة',
         style: 'destructive',
         onPress: async () => {
-          await clearMember();
+          await Promise.allSettled(members.map(clearMember));
           await signOut(auth).catch(() => {});
           onLogout();
         },
@@ -459,11 +523,19 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     Vibration.cancel();
   };
 
-  const mapNote = zone
-    ? lost
-      ? `آخر مرة كان ضمن ${radius} متر منك تقريبًا`
-      : `${who} ضمن ${radius} متر منك تقريبًا`
-    : '';
+  const btOff = !!bt && bt !== State.PoweredOn;
+  const liveOf = (m: FamMember) => (m.mac ? live[m.mac] : undefined);
+  const activeCount = members.filter((m) => {
+    const l = liveOf(m);
+    return l?.signal && l.zone !== 'LOST';
+  }).length;
+  const warnAny = members.some((m) => {
+    const l = liveOf(m);
+    return l && (l.zone === 'MEDIUM' || l.zone === 'FAR' || l.zone === 'LOST' || l.edge);
+  });
+  const openCount = Object.keys(reports).length;
+  const screenMember = screen && members.find((m) => m.id === screen.memberId);
+  const draftError = formError(draft);
 
   const renderMap = (height: number) => (
     <View style={[s.mapBox, { height }]}>
@@ -483,21 +555,346 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
               fillColor="transparent"
             />
           )}
-          {zone && (
-            <Circle
-              center={me}
-              radius={radius}
-              strokeColor={ZONE_UI[zone].color}
-              strokeWidth={2}
-              fillColor={CIRCLE_FILL[zone]}
-            />
-          )}
+          {members.map((m) => {
+            const l = liveOf(m);
+            return (
+              l?.zone && (
+                <Circle
+                  key={m.id}
+                  center={me}
+                  radius={l.radius}
+                  strokeColor={ZONE_UI[l.zone].color}
+                  strokeWidth={2}
+                  fillColor={CIRCLE_FILL[l.zone]}
+                />
+              )
+            );
+          })}
         </MapView>
       ) : (
         <Text style={s.mapWait}>جاري تحديد موقعك...</Text>
       )}
     </View>
   );
+
+  const renderForm = () => {
+    const old = members.find((m) => m.id === editing);
+    const chips = <T extends string>(options: Record<T, string>, value: T, set: (v: T) => void) => (
+      <View style={[s.chips, { flexWrap: 'wrap' }]}>
+        {(Object.keys(options) as T[]).map((k) => (
+          <Pressable
+            key={k}
+            onPress={() => set(k)}
+            style={[s.chip, value === k && { backgroundColor: C.primary, borderColor: C.primary }]}
+          >
+            <Text style={[s.chipText, value === k && { color: '#fff' }]}>{options[k]}</Text>
+          </Pressable>
+        ))}
+      </View>
+    );
+    return (
+      <View style={[ui.card, { marginBottom: 14 }]}>
+        <Text style={s.formTitle}>{old ? `تعديل بيانات ${old.name}` : 'أضف فردًا من العائلة'}</Text>
+
+        <Text style={s.label}>الاسم</Text>
+        <TextInput
+          style={s.input}
+          value={draft.name}
+          onChangeText={(name) => setDraft({ ...draft, name })}
+          placeholder="مثلًا: سنا"
+          placeholderTextColor={C.faint}
+          textAlign="right"
+        />
+
+        <Text style={s.label}>النوع</Text>
+        {chips({ child: KIND_UI.child.label, elder: KIND_UI.elder.label }, draft.kind, (kind) => setDraft({ ...draft, kind }))}
+
+        <Text style={s.label}>الجنس</Text>
+        {chips(GENDER_UI, draft.gender, (gender) => setDraft({ ...draft, gender }))}
+
+        <Text style={s.label}>العمر</Text>
+        <TextInput
+          style={s.input}
+          value={draft.age}
+          onChangeText={(age) => setDraft({ ...draft, age: latinDigits(age).slice(0, 3) })}
+          placeholder={draft.kind === 'child' ? `من 0 إلى ${MAX_AGE.child}` : `حتى ${MAX_AGE.elder}`}
+          placeholderTextColor={C.faint}
+          keyboardType="number-pad"
+          textAlign="right"
+        />
+
+        <Text style={s.label}>لغته</Text>
+        {chips(LANGUAGES, draft.language, (language) => setDraft({ ...draft, language }))}
+        <Text style={[s.hint, { marginTop: 6 }]}>المتطوع اللي يتكلم لغته يوصله البلاغ أول</Text>
+
+        <Text style={s.label}>{draft.kind === 'child' ? 'رقم جوال ولي الأمر' : 'رقم جوال للتواصل (اختياري)'}</Text>
+        <TextInput
+          style={s.input}
+          value={draft.phone}
+          onChangeText={(phone) => setDraft({ ...draft, phone: latinDigits(phone).slice(0, 15) })}
+          placeholder="05XXXXXXXX"
+          placeholderTextColor={C.faint}
+          keyboardType="phone-pad"
+          textAlign="right"
+        />
+        <Text style={[s.hint, { marginTop: 6 }]}>يشوفه المتطوع اللي يستلم البلاغ بس، عشان يتواصل معكم مباشرة</Text>
+
+        <Text style={s.label}>كيف يتعرف عليه المتطوع؟ (اختياري)</Text>
+        <TextInput
+          style={[s.input, { minHeight: 70 }]}
+          value={draft.description}
+          onChangeText={(description) => setDraft({ ...draft, description })}
+          placeholder="مثلًا: ثوب أبيض وشماغ أحمر، يمشي بعكاز"
+          placeholderTextColor={C.faint}
+          multiline
+          textAlign="right"
+          textAlignVertical="top"
+        />
+
+        <Text style={s.label}>حالة صحية (اختياري)</Text>
+        <TextInput
+          style={s.input}
+          value={draft.condition}
+          onChangeText={(condition) => setDraft({ ...draft, condition })}
+          placeholder="مثلًا: ربو، سكري"
+          placeholderTextColor={C.faint}
+          textAlign="right"
+        />
+        {!!draft.condition.trim() && (
+          <>
+            <Text style={s.label}>وش لازم يسوي المتطوع؟</Text>
+            <TextInput
+              style={[s.input, { minHeight: 70 }]}
+              value={draft.notes}
+              onChangeText={(notes) => setDraft({ ...draft, notes })}
+              placeholder="مثلًا: البخاخ في الجيب الأمامي لشنطته"
+              placeholderTextColor={C.faint}
+              multiline
+              textAlign="right"
+              textAlignVertical="top"
+            />
+          </>
+        )}
+        <Text style={[s.hint, { marginTop: 6 }]}>تظهر لمتطوع واحد بس وقت البلاغ، وتنحذف لما ينقفل</Text>
+
+        {!!draftError && !!draft.name.trim() && <Text style={s.formError}>{draftError}</Text>}
+        <Button label={saving ? 'جارٍ الحفظ…' : 'حفظ'} onPress={saveDraft} disabled={!!draftError || saving} style={{ marginTop: 12 }} />
+        {members.length > 0 && <Button label="إلغاء" kind="ghost" onPress={() => setEditing(null)} style={{ marginTop: 10 }} />}
+      </View>
+    );
+  };
+
+  const renderLink = (m: FamMember) => {
+    const pv = pairView?.memberId === m.id ? pairView : null;
+    if (pv)
+      return (
+        <View style={s.linkPanel}>
+          <Text style={s.formTitle}>تأكيد سوار {m.name}</Text>
+          <Text style={s.hint}>عشان نتأكد إن السوار بيدك أنتِ، مو سوار شخص ثاني قريب منك</Text>
+          <Text style={[s.nearMac, { textAlign: 'center', marginVertical: 8 }]}>{pv.mac}</Text>
+
+          <View style={s.stepRow}>
+            <Ionicons name={pv.near ? 'checkmark-circle' : 'ellipse-outline'} size={20} color={pv.near ? C.safe : C.faint} />
+            <Text style={s.stepText}>١. لصّقي السوار بالجوال</Text>
+          </View>
+          <View style={s.stepRow}>
+            <Ionicons name="ellipse-outline" size={20} color={C.faint} />
+            <Text style={s.stepText}>٢. اضغطي زر السوار ضغطتين وهو ملاصق (بيصفّر، هذا طبيعي)</Text>
+          </View>
+
+          {!pv.heard && <Text style={s.empty}>ما نسمع هذا السوار حاليًا، تأكدي من الرقم</Text>}
+          {pv.timedOut && (
+            <Banner
+              tone="warn"
+              icon="alert-circle-outline"
+              text="ما وصلنا ضغط من هذا السوار وهو ملاصق. تأكدي إنه نفس السوار اللي بيدك واضغطي مرة ثانية"
+            />
+          )}
+          <Button label="إلغاء" kind="ghost" onPress={cancelPair} style={{ marginTop: 12 }} />
+        </View>
+      );
+    return (
+      <View style={s.linkPanel}>
+        <Text style={s.formTitle}>ربط سوار {m.name}</Text>
+        <Text style={s.hint}>لصّقي السوار بالجوال، وبيطلع أول القائمة</Text>
+
+        {nearbyList.length === 0 && <Text style={s.empty}>جاري البحث عن أساور قريبة...</Text>}
+        {nearbyList.map(([mac, v], i) => {
+          const owner = members.find((x) => x.mac === mac);
+          return (
+            <View key={mac} style={s.nearRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.nearMac}>{mac}</Text>
+                <Text style={s.nearSub}>
+                  {owner ? `مربوط بـ${owner.name}` : i === 0 ? 'الأقرب' : 'قريب'} · الإشارة {v.rssi}
+                </Text>
+              </View>
+              {!owner && (
+                <Pressable style={s.linkBtn} onPress={() => startPair(m.id, mac)}>
+                  <Text style={s.linkText}>ربط</Text>
+                </Pressable>
+              )}
+            </View>
+          );
+        })}
+
+        <Text style={s.label}>أو اكتبي الرقم المطبوع ورا السوار</Text>
+        <View style={s.typedRow}>
+          <TextInput
+            style={[s.input, { flex: 1 }]}
+            value={typedMac}
+            onChangeText={(t) => setTypedMac(cleanMac(t))}
+            placeholder="785005002D12"
+            placeholderTextColor={C.faint}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            textAlign="center"
+          />
+          <Pressable
+            style={[s.linkBtn, typedMac.length !== 12 && { opacity: 0.4 }]}
+            onPress={() => typedMac.length === 12 && startPair(m.id, typedMac)}
+          >
+            <Text style={s.linkText}>ربط</Text>
+          </Pressable>
+        </View>
+        <Button label="لاحقًا" kind="ghost" onPress={() => setLinkFor(null)} style={{ marginTop: 10 }} />
+      </View>
+    );
+  };
+
+  const renderMember = (m: FamMember) => {
+    const l = liveOf(m);
+    const zone = l?.zone ?? null;
+    const reading = l?.signal ?? null;
+    const lost = zone === 'LOST';
+    const zoneUi = zone ? ZONE_UI[zone] : null;
+    const strength = reading && !lost ? bars(reading.smooth) : 0;
+    const ago = reading ? Math.round((now - reading.lastSeen) / 1000) : 0;
+    const edge = !!l?.edge;
+    const warn = zone === 'MEDIUM' || zone === 'FAR' || lost || edge;
+    const report = reports[m.id];
+    const role = [KIND_UI[m.kind].label, GENDER_UI[m.gender], m.age && `${m.age} سنة`, LANGUAGES[m.language]].filter(Boolean).join(' · ');
+
+    return (
+      <View key={m.id} style={[ui.card, { marginBottom: 14 }, warn && { borderColor: lost || zone === 'FAR' || edge ? C.dangerBorder : C.warnBorder }]}>
+        {edge && <Banner tone="danger" icon="exit-outline" text={`${m.name} قريب من حدود الفعالية أو خارجها`} onPress={() => setTab('map')} />}
+        {(zone === 'MEDIUM' || zone === 'FAR') && <Banner tone="warn" icon="warning-outline" text={`الإشارة تضعف، ${m.name} يبتعد عنك`} />}
+        {lost && <Banner tone="danger" icon="close-circle-outline" text={`انقطعت الإشارة عن سوار ${m.name}`} />}
+
+        <View style={s.memberRow}>
+          <View style={[s.avatar, { backgroundColor: KIND_UI[m.kind].color }]}>
+            <Text style={s.avatarText}>{m.name[0]}</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <View style={s.nameRow}>
+              <Text style={s.memberName}>{m.name}</Text>
+              <View style={s.bars}>
+                {[1, 2, 3, 4].map((i) => (
+                  <View
+                    key={i}
+                    style={[
+                      s.bar,
+                      {
+                        height: 4 + i * 4,
+                        backgroundColor: i <= strength ? (strength <= 1 ? C.danger : strength <= 2 ? C.warn : C.accent) : C.barOff,
+                      },
+                    ]}
+                  />
+                ))}
+              </View>
+            </View>
+            <Text style={s.memberRole}>{role}</Text>
+            {!!m.condition && (
+              <View style={[s.meta, { marginTop: 4 }]}>
+                <Ionicons name="medkit-outline" size={12} color={C.muted} />
+                <Text style={s.metaText}>{m.condition}</Text>
+              </View>
+            )}
+
+            <View style={s.metaRow}>
+              <View style={s.meta}>
+                <View style={[ui.dot, { backgroundColor: zoneUi?.color ?? C.faint }]} />
+                <Text style={[s.metaText, { color: zoneUi?.color ?? C.faint, fontWeight: '600' }]}>
+                  {zoneUi?.label ?? (m.mac ? 'جاري البحث عن السوار...' : 'لم يُربط سوار بعد')}
+                </Text>
+              </View>
+              {reading && (
+                <View style={s.meta}>
+                  <Ionicons name="time-outline" size={12} color={C.faint} />
+                  <Text style={s.metaText}>{ago < 3 ? 'الآن' : `قبل ${ago} ث`}</Text>
+                </View>
+              )}
+            </View>
+            {reading && !lost && (
+              <Text style={s.trend}>
+                {TREND_UI[reading.trend]} · ضمن {l?.radius} متر تقريبًا
+              </Text>
+            )}
+          </View>
+        </View>
+
+        {/* Lost child: report it, or close the open report */}
+        {m.kind === 'child' && !report && (
+          <Button label={`${m.name} ضائع`} icon="search" kind="danger" onPress={() => setScreen({ kind: 'lost', memberId: m.id })} style={{ marginTop: 14 }} />
+        )}
+        {report && (
+          <View style={{ marginTop: 14 }}>
+            <Banner
+              tone="danger"
+              icon="megaphone-outline"
+              text={report.status === 'searching' ? 'متطوع استلم البلاغ ويدور الحين' : 'البلاغ وصل للمتطوعين القريبين، ننتظر أحد يستلمه'}
+            />
+            <Button label="لقيناه" icon="checkmark-circle-outline" onPress={() => setScreen({ kind: 'found', memberId: m.id })} />
+          </View>
+        )}
+
+        {!m.mac && linkFor === m.id && renderLink(m)}
+
+        {/* Technical details for the demo */}
+        {m.mac && (
+          <View style={s.techCard}>
+            <Text style={s.techText}>رقم السوار: {m.mac}</Text>
+            {reading && (
+              <Text style={s.techText}>
+                الإشارة الآن {reading.rssi} · المتوسط {reading.smooth}
+              </Text>
+            )}
+          </View>
+        )}
+
+        <View style={s.memberActions}>
+          <Pressable
+            style={s.smallBtn}
+            hitSlop={6}
+            onPress={() => {
+              setDraft(m);
+              setEditing(m.id);
+            }}
+          >
+            <Ionicons name="create-outline" size={15} color={C.accent} />
+            <Text style={[s.smallBtnText, { color: C.accent }]}>تعديل</Text>
+          </Pressable>
+          {m.mac ? (
+            <Pressable style={s.smallBtn} hitSlop={6} onPress={() => unlink(m)}>
+              <Ionicons name="unlink-outline" size={15} color={C.accent} />
+              <Text style={[s.smallBtnText, { color: C.accent }]}>فك السوار</Text>
+            </Pressable>
+          ) : (
+            linkFor !== m.id && (
+              <Pressable style={s.smallBtn} hitSlop={6} onPress={() => setLinkFor(m.id)}>
+                <Ionicons name="link-outline" size={15} color={C.accent} />
+                <Text style={[s.smallBtnText, { color: C.accent }]}>ربط سوار</Text>
+              </Pressable>
+            )
+          )}
+          <Pressable style={s.smallBtn} hitSlop={6} onPress={() => removeMember(m)}>
+            <Ionicons name="trash-outline" size={15} color={C.danger} />
+            <Text style={[s.smallBtnText, { color: C.danger }]}>حذف</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  };
 
   return (
     <View style={s.screen}>
@@ -512,9 +909,12 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
           </>
         }
       >
-        <Pill dot={reading && !lost ? C.mint : C.faint} text={reading && !lost ? 'سوار واحد نشط' : 'لا يوجد سوار نشط'} />
-        {report && <Pill alert icon="megaphone-outline" text={`بلاغ مفتوح: ${report.member.name}`} />}
-        {(warn || !!sos) && !report && <Pill alert icon="warning-outline" text="تنبيه" />}
+        <Pill
+          dot={activeCount ? C.mint : C.faint}
+          text={activeCount === 0 ? 'لا يوجد سوار نشط' : activeCount === 1 ? 'سوار واحد نشط' : `${activeCount} أساور نشطة`}
+        />
+        {openCount > 0 && <Pill alert icon="megaphone-outline" text={openCount === 1 ? 'بلاغ مفتوح' : `${openCount} بلاغات مفتوحة`} />}
+        {(warnAny || !!sos) && !openCount && <Pill alert icon="warning-outline" text="تنبيه" />}
       </Header>
 
       <ScrollView contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
@@ -524,9 +924,9 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
             <View style={s.sosIcon}>
               <Ionicons name="alert" size={30} color={C.danger} />
             </View>
-            <Text style={s.sosTitle}>{sos === 'FALL' ? 'احتمال سقوط' : 'طلب مساعدة'}</Text>
+            <Text style={s.sosTitle}>{sos.kind === 'FALL' ? 'احتمال سقوط' : 'طلب مساعدة'}</Text>
             <Text style={s.sosText}>
-              {sos === 'FALL' ? `${who} ما تحرك من فترة، تأكدوا منه` : `${who} ضغط زر الطوارئ في السوار`}
+              {sos.kind === 'FALL' ? `${sos.who} ما تحرك من فترة، تأكدوا منه` : `${sos.who} ضغط زر الطوارئ في السوار`}
             </Text>
             <Pressable style={s.sosBtn} onPress={dismissSos}>
               <Text style={s.sosBtnText}>تم الاستلام</Text>
@@ -534,13 +934,18 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
           </View>
         )}
 
-        {btOff && <Banner tone="danger" icon="bluetooth" text="شغّلي البلوتوث عشان نتابع السوار" />}
+        {btOff && <Banner tone="danger" icon="bluetooth" text="شغّلي البلوتوث عشان نتابع الأساور" />}
 
-        {screen === 'lost' && member && (
-          <LostScreen name={member.name} onSend={(d, photo) => sendReport('lost', d, photo)} onCancel={() => setScreen(null)} />
+        {screen?.kind === 'lost' && screenMember && (
+          <LostScreen
+            name={screenMember.name}
+            initial={screenMember.description}
+            onSend={(d, photo) => sendReport(screenMember, 'lost', d, photo)}
+            onCancel={() => setScreen(null)}
+          />
         )}
-        {screen === 'found' && report && (
-          <FoundScreen name={report.member.name} onConfirm={confirmFound} onCancel={() => setScreen(null)} />
+        {screen?.kind === 'found' && screenMember && (
+          <FoundScreen name={screenMember.name} onConfirm={() => confirmFound(screenMember.id)} onCancel={() => setScreen(null)} />
         )}
 
         {!screen && tab === 'home' && (
@@ -551,255 +956,26 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
               <Banner
                 tone="safe"
                 icon="checkmark-circle"
-                text="الحمد لله على السلامة، انقفل البلاغ وانحذفت بياناته"
-                onPress={() => setJustFound(false)}
+                text={`الحمد لله على سلامة ${justFound}، انقفل البلاغ وانحذفت بياناته`}
+                onPress={() => setJustFound(null)}
               />
             )}
 
-            {editing && (
-              <View style={[ui.card, { marginBottom: 14 }]}>
-                <Text style={s.formTitle}>{member ? 'تعديل بيانات الفرد' : 'أضف فردًا من العائلة'}</Text>
+            {editing && renderForm()}
+            {members.map(renderMember)}
 
-                <Text style={s.label}>الاسم</Text>
-                <TextInput
-                  style={s.input}
-                  value={draft.name}
-                  onChangeText={(name) => setDraft({ ...draft, name })}
-                  placeholder="مثلًا: سنا"
-                  placeholderTextColor={C.faint}
-                  textAlign="right"
-                />
-
-                <Text style={s.label}>النوع</Text>
-                <View style={s.chips}>
-                  {(['child', 'elder'] as Kind[]).map((k) => (
-                    <Pressable
-                      key={k}
-                      onPress={() => setDraft({ ...draft, kind: k })}
-                      style={[s.chip, draft.kind === k && { backgroundColor: C.primary, borderColor: C.primary }]}
-                    >
-                      <Text style={[s.chipText, draft.kind === k && { color: '#fff' }]}>{KIND_UI[k].label}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-
-                <Text style={s.label}>العمر</Text>
-                <TextInput
-                  style={s.input}
-                  value={draft.age}
-                  onChangeText={(age) => setDraft({ ...draft, age: latinDigits(age).slice(0, 3) })}
-                  placeholder="مثلًا: 8"
-                  placeholderTextColor={C.faint}
-                  keyboardType="number-pad"
-                  textAlign="right"
-                />
-
-                <Text style={s.label}>حالة صحية (اختياري)</Text>
-                <TextInput
-                  style={s.input}
-                  value={draft.condition}
-                  onChangeText={(condition) => setDraft({ ...draft, condition })}
-                  placeholder="مثلًا: ربو، سكري"
-                  placeholderTextColor={C.faint}
-                  textAlign="right"
-                />
-                {!!draft.condition.trim() && (
-                  <>
-                    <Text style={s.label}>وش لازم يسوي المتطوع؟</Text>
-                    <TextInput
-                      style={[s.input, { minHeight: 70 }]}
-                      value={draft.notes}
-                      onChangeText={(notes) => setDraft({ ...draft, notes })}
-                      placeholder="مثلًا: البخاخ في الجيب الأمامي لشنطته"
-                      placeholderTextColor={C.faint}
-                      multiline
-                      textAlign="right"
-                      textAlignVertical="top"
-                    />
-                  </>
-                )}
-                <Text style={[s.hint, { marginTop: 6 }]}>تظهر لمتطوع واحد بس وقت البلاغ، وتنحذف لما ينقفل</Text>
-
-                <Button label="حفظ" onPress={saveDraft} disabled={!draft.name.trim()} style={{ marginTop: 12 }} />
-                {member && <Button label="إلغاء" kind="ghost" onPress={() => setEditing(false)} style={{ marginTop: 10 }} />}
-              </View>
+            {!editing && (
+              <Button
+                label="أضف فردًا آخر"
+                icon="person-add-outline"
+                kind="ghost"
+                onPress={() => {
+                  setDraft(EMPTY);
+                  setEditing('new');
+                }}
+                style={{ marginBottom: 14 }}
+              />
             )}
-
-            {!mac && pairView && (
-              <View style={[ui.card, { marginBottom: 14 }]}>
-                <Text style={s.formTitle}>تأكيد السوار</Text>
-                <Text style={s.hint}>عشان نتأكد إن السوار بيدك أنتِ، مو سوار شخص ثاني قريب منك</Text>
-                <Text style={[s.nearMac, { textAlign: 'center', marginVertical: 8 }]}>{pairView.mac}</Text>
-
-                <View style={s.stepRow}>
-                  <Ionicons
-                    name={pairView.near ? 'checkmark-circle' : 'ellipse-outline'}
-                    size={20}
-                    color={pairView.near ? C.safe : C.faint}
-                  />
-                  <Text style={s.stepText}>١. قرّبي السوار من الجوال</Text>
-                </View>
-                <View style={s.stepRow}>
-                  <Ionicons name="ellipse-outline" size={20} color={C.faint} />
-                  <Text style={s.stepText}>٢. اضغطي زر السوار ضغطتين وهو قريب (بيصفّر، هذا طبيعي)</Text>
-                </View>
-
-                {!pairView.heard && <Text style={s.empty}>ما نسمع هذا السوار حاليًا، تأكدي من الرقم</Text>}
-                {pairView.timedOut && (
-                  <Banner
-                    tone="warn"
-                    icon="alert-circle-outline"
-                    text="ما وصلنا ضغط من هذا السوار. تأكدي إنه نفس السوار اللي بيدك واضغطي مرة ثانية"
-                  />
-                )}
-                <Button label="إلغاء" kind="ghost" onPress={cancelPair} style={{ marginTop: 12 }} />
-              </View>
-            )}
-
-            {!mac && !pairView && (
-              <View style={[ui.card, { marginBottom: 14 }]}>
-                <Text style={s.formTitle}>ربط السوار</Text>
-                <Text style={s.hint}>قرّبي السوار من الجوال، وبيطلع أول القائمة</Text>
-
-                {nearbyList.length === 0 && <Text style={s.empty}>جاري البحث عن أساور قريبة...</Text>}
-                {nearbyList.map(([m, v], i) => (
-                  <View key={m} style={s.nearRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={s.nearMac}>{m}</Text>
-                      <Text style={s.nearSub}>{i === 0 ? 'الأقرب' : 'قريب'} · الإشارة {v.rssi}</Text>
-                    </View>
-                    <Pressable style={s.linkBtn} onPress={() => startPair(m)}>
-                      <Text style={s.linkText}>ربط</Text>
-                    </Pressable>
-                  </View>
-                ))}
-
-                <Text style={s.label}>أو اكتبي الرقم المطبوع ورا السوار</Text>
-                <View style={s.typedRow}>
-                  <TextInput
-                    style={[s.input, { flex: 1 }]}
-                    value={typedMac}
-                    onChangeText={(t) => setTypedMac(cleanMac(t))}
-                    placeholder="785005002D12"
-                    placeholderTextColor={C.faint}
-                    autoCapitalize="characters"
-                    autoCorrect={false}
-                    textAlign="center"
-                  />
-                  <Pressable
-                    style={[s.linkBtn, typedMac.length !== 12 && { opacity: 0.4 }]}
-                    onPress={() => typedMac.length === 12 && startPair(typedMac)}
-                  >
-                    <Text style={s.linkText}>ربط</Text>
-                  </Pressable>
-                </View>
-              </View>
-            )}
-
-            {/* Member card */}
-            <View style={[ui.card, warn && { borderColor: lost || zone === 'FAR' || nearEdge ? C.dangerBorder : C.warnBorder }]}>
-              {nearEdge && (
-                <Banner tone="danger" icon="exit-outline" text={`${who} قريب من حدود الفعالية أو خارجها`} onPress={() => setTab('map')} />
-              )}
-              {(zone === 'MEDIUM' || zone === 'FAR') && (
-                <Banner tone="warn" icon="warning-outline" text={`الإشارة تضعف، ${who} يبتعد عنك`} />
-              )}
-              {lost && <Banner tone="danger" icon="close-circle-outline" text="انقطعت الإشارة عن السوار" />}
-
-              <View style={s.memberRow}>
-                <View style={[s.avatar, { backgroundColor: memberColor }]}>
-                  <Text style={s.avatarText}>{who[0]}</Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <View style={s.nameRow}>
-                    <Text style={s.memberName}>{who}</Text>
-                    <View style={s.bars}>
-                      {[1, 2, 3, 4].map((i) => (
-                        <View
-                          key={i}
-                          style={[
-                            s.bar,
-                            {
-                              height: 4 + i * 4,
-                              backgroundColor:
-                                i <= strength ? (strength <= 1 ? C.danger : strength <= 2 ? C.warn : C.accent) : C.barOff,
-                            },
-                          ]}
-                        />
-                      ))}
-                    </View>
-                  </View>
-                  {!!memberRole && <Text style={s.memberRole}>{memberRole}</Text>}
-                  {!!member?.condition && (
-                    <View style={[s.meta, { marginTop: 4 }]}>
-                      <Ionicons name="medkit-outline" size={12} color={C.muted} />
-                      <Text style={s.metaText}>{member.condition}</Text>
-                    </View>
-                  )}
-
-                  <View style={s.metaRow}>
-                    <View style={s.meta}>
-                      <View style={[ui.dot, { backgroundColor: zoneUi?.color ?? C.faint }]} />
-                      <Text style={[s.metaText, { color: zoneUi?.color ?? C.faint, fontWeight: '600' }]}>
-                        {zoneUi?.label ?? (mac ? 'جاري البحث عن السوار...' : 'لم يُربط سوار بعد')}
-                      </Text>
-                    </View>
-                    {reading && (
-                      <View style={s.meta}>
-                        <Ionicons name="time-outline" size={12} color={C.faint} />
-                        <Text style={s.metaText}>{ago < 3 ? 'الآن' : `قبل ${ago} ث`}</Text>
-                      </View>
-                    )}
-                  </View>
-                  {reading && !lost && (
-                    <Text style={s.trend}>
-                      {TREND_UI[reading.trend]} · ضمن {radius} متر تقريبًا
-                    </Text>
-                  )}
-                </View>
-              </View>
-
-              {member && !editing && (
-                <View style={s.memberActions}>
-                  <Pressable
-                    style={s.smallBtn}
-                    hitSlop={6}
-                    onPress={() => {
-                      setDraft(member);
-                      setEditing(true);
-                    }}
-                  >
-                    <Ionicons name="create-outline" size={15} color={C.accent} />
-                    <Text style={[s.smallBtnText, { color: C.accent }]}>تعديل البيانات</Text>
-                  </Pressable>
-                  <Pressable style={s.smallBtn} hitSlop={6} onPress={removeMember}>
-                    <Ionicons name="trash-outline" size={15} color={C.danger} />
-                    <Text style={[s.smallBtnText, { color: C.danger }]}>حذف</Text>
-                  </Pressable>
-                </View>
-              )}
-
-              {/* Lost child: report it, or close the open report */}
-              {member?.kind === 'child' && !report && (
-                <Button
-                  label={`${who} ضائع`}
-                  icon="search"
-                  kind="danger"
-                  onPress={() => setScreen('lost')}
-                  style={{ marginTop: 14 }}
-                />
-              )}
-              {report && (
-                <View style={{ marginTop: 14 }}>
-                  <Banner
-                    tone="danger"
-                    icon="megaphone-outline"
-                    text={report.status === 'searching' ? 'متطوع استلم البلاغ ويدور الحين' : 'البلاغ وصل للمتطوعين القريبين، ننتظر أحد يستلمه'}
-                  />
-                  <Button label="لقيناه" icon="checkmark-circle-outline" onPress={() => setScreen('found')} />
-                </View>
-              )}
-            </View>
 
             {/* Quick actions */}
             <Text style={ui.caption}>إجراءات سريعة</Text>
@@ -813,21 +989,6 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
                 <Text style={s.actionText}>سجل التنبيهات</Text>
               </Pressable>
             </View>
-
-            {/* Technical details for the demo */}
-            {mac && (
-              <View style={s.techCard}>
-                <Text style={s.techText}>رقم السوار: {mac}</Text>
-                {reading && (
-                  <Text style={s.techText}>
-                    الإشارة الآن {reading.rssi} · المتوسط {reading.smooth}
-                  </Text>
-                )}
-                <Pressable onPress={unlink} hitSlop={8}>
-                  <Text style={s.unlink}>تغيير السوار</Text>
-                </Pressable>
-              </View>
-            )}
           </>
         )}
 
@@ -835,7 +996,15 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
           <>
             <Text style={ui.sectionTitle}>خريطة العائلة</Text>
             {renderMap(420)}
-            {!!mapNote && <Text style={s.mapNote}>{mapNote}</Text>}
+            {members.map((m) => {
+              const l = liveOf(m);
+              if (!l?.zone) return null;
+              return (
+                <Text key={m.id} style={s.mapNote}>
+                  {l.zone === 'LOST' ? `${m.name}: آخر مرة كان ضمن ${l.radius} متر منك تقريبًا` : `${m.name} ضمن ${l.radius} متر منك تقريبًا`}
+                </Text>
+              );
+            })}
           </>
         )}
 
@@ -845,8 +1014,11 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
             {log.length === 0 && <Text style={s.empty}>لا توجد تنبيهات بعد</Text>}
             {log.map((item, i) => (
               <View key={i} style={s.logRow}>
-                <View style={[s.logDot, { backgroundColor: ZONE_UI[item.zone].color }]} />
-                <Text style={[s.logLabel, { color: ZONE_UI[item.zone].color }]}>{ZONE_UI[item.zone].label}</Text>
+                <View style={[s.logDot, { backgroundColor: ZONE_UI[item.kind].color }]} />
+                <Text style={[s.logLabel, { color: ZONE_UI[item.kind].color }]}>
+                  {item.who ? `${item.who}: ` : ''}
+                  {ZONE_UI[item.kind].label}
+                </Text>
                 <Text style={s.logTime}>{item.time}</Text>
               </View>
             ))}
@@ -861,7 +1033,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
           setScreen(null);
         }}
         tabs={[
-          { key: 'home', label: 'الرئيسية', icon: 'home-outline', dot: !!report },
+          { key: 'home', label: 'الرئيسية', icon: 'home-outline', dot: openCount > 0 },
           { key: 'map', label: 'الخريطة', icon: 'map-outline' },
           { key: 'alerts', label: 'التنبيهات', icon: 'notifications-outline' },
         ]}
@@ -872,8 +1044,6 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
 
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.bg },
-
-
   body: { padding: 20, paddingBottom: 110 },
 
   memberRow: { flexDirection: 'row-reverse', gap: 12, alignItems: 'flex-start' },
@@ -923,7 +1093,9 @@ const s = StyleSheet.create({
   },
   actionText: { color: C.primary, fontSize: 13, fontWeight: '600' },
 
-  techCard: { marginTop: 18, padding: 12, borderRadius: 14, backgroundColor: '#EEF5F4' },
+  techCard: { marginTop: 14, padding: 12, borderRadius: 14, backgroundColor: '#EEF5F4' },
+  linkPanel: { marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border },
+  formError: { color: C.danger, fontSize: 13, fontWeight: '600', textAlign: 'right', marginTop: 12 },
   techText: { color: C.primary, fontSize: 12, textAlign: 'right', marginBottom: 2 },
 
   sos: {

@@ -62,13 +62,9 @@ export function useLive() {
   const volunteers = useCollection<Volunteer>('volunteers', where('onDuty', '==', true));
   const sightings = useCollection<Sighting>('sightings', where('at', '>=', since));
   const passerby = useCollection<PasserbyReport>('passerbyReports', where('at', '>=', since));
-  // Bracelet number → family → member, to name the child a passer-by found
-  const bracelets = useCollection<{ id: string; familyId: string }>('bracelets');
+  // Bracelet number → member, to name the child a passer-by found (a family can have several members)
   const members = useCollection<Member>('members');
-  const memberOf = (braceletId: string) => {
-    const familyId = bracelets.find((b) => b.id === braceletId.toUpperCase())?.familyId;
-    return members.find((m) => m.id === familyId);
-  };
+  const memberOf = (braceletId: string) => members.find((m) => m.braceletId?.toUpperCase() === braceletId.toUpperCase());
 
   const name = (id: string) => volunteers.find((v) => v.id === id)?.name ?? 'متطوع';
   const events: LiveEvent[] = [

@@ -9,7 +9,19 @@ export type Point = { latitude: number; longitude: number };
 // fall = bracelet stopped moving for 60 s (possible fall)
 export type ReportType = 'lost' | 'emergency' | 'fall';
 export type ReportStatus = 'open' | 'searching' | 'closed';
-export type ClosedAs = 'found' | 'security';
+// found = handed to the family, security = handed to security or ambulance,
+// helped = helped on the spot (e.g. an emergency press), nobody needed to take over
+export type ClosedAs = 'found' | 'security' | 'helped';
+export type Gender = 'male' | 'female';
+
+// Languages a member speaks and a volunteer can offer; volunteers who share it get the report first
+export const LANGUAGES = {
+  ar: 'العربية', en: 'الإنجليزية', ur: 'الأردية', hi: 'الهندية', bn: 'البنغالية', id: 'الإندونيسية', fr: 'الفرنسية', tr: 'التركية',
+} as const;
+export type Language = keyof typeof LANGUAGES;
+
+// Age limits checked when the family saves a member
+export const MAX_AGE = { child: 16, elder: 120 } as const;
 
 export type Health = {
   condition: string; // what the family wrote, e.g. "Asthma"
@@ -20,7 +32,11 @@ export type Member = {
   id: string;
   name: string;
   kind: Kind;
+  gender: Gender;
   age: number;
+  language: Language;
+  phone: string | null; // family phone; the assigned volunteer calls it directly
+  description: string; // how to recognise them today (clothes, looks), used by bracelet alerts
   health: Health | null; // optional, for child or elderly
   braceletId: string | null; // linked bracelet this visit
 };
@@ -29,10 +45,11 @@ export type Report = {
   id: string;
   type: ReportType;
   braceletId: string; // per-visit bracelet number (MAC), the only thing the bracelet broadcasts
-  member: { name: string; kind: Kind; age: number };
+  member: { name: string; kind: Kind; age: number; gender?: Gender; language?: Language };
   photo: string | null; // small data URI stored inside the report (Spark plan has no Storage)
   description: string; // clothing and looks, written by the parent
   health: Health | null; // shown only to the assigned volunteer, deleted on close
+  phone: string | null; // family phone, same privacy as health
   area: string; // last known area inside the event
   location: Point | null; // last known position, for the security map
   createdAt: number; // ms since epoch
@@ -104,10 +121,14 @@ export const volunteers: Volunteer[] = [
 ];
 
 export const members: Member[] = [
-  { id: 'm1', name: 'سنا', kind: 'child', age: 6, health: null, braceletId: '785005002D12' },
+  { id: 'm1', name: 'سنا', gender: 'female', language: 'ar', phone: null, description: '', kind: 'child', age: 6, health: null, braceletId: '785005002D12' },
   {
     id: 'm2',
     name: 'يوسف',
+    gender: 'male',
+    language: 'ar',
+    phone: null,
+    description: '',
     braceletId: '785005002E40',
     kind: 'child',
     age: 8,
@@ -116,6 +137,10 @@ export const members: Member[] = [
   {
     id: 'm3',
     name: 'عبدالله',
+    gender: 'male',
+    language: 'ar',
+    phone: null,
+    description: '',
     braceletId: '785005002F07',
     kind: 'elder',
     age: 74,
@@ -124,6 +149,10 @@ export const members: Member[] = [
   {
     id: 'm4',
     name: 'فاطمة',
+    gender: 'female',
+    language: 'ar',
+    phone: null,
+    description: '',
     braceletId: '785005003A19',
     kind: 'elder',
     age: 68,
@@ -131,7 +160,7 @@ export const members: Member[] = [
   },
 ];
 
-const base = { status: 'open' as ReportStatus, assignedVolunteerId: null, closedAs: null, closedAt: null };
+const base = { status: 'open' as ReportStatus, assignedVolunteerId: null, closedAs: null, closedAt: null, phone: null };
 
 export const reports: Report[] = [
   {

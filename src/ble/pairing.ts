@@ -2,7 +2,8 @@
 // The phone only listens (never connects), so the proof is a NEW double press
 // (frame 0x21 count goes up) heard while the bracelet is held next to the phone.
 
-export const PAIR_RSSI = -65; // stronger than this = held next to the phone
+// ponytail: -30 = practically touching the phone; some phones may never reach it, try -40 if linking keeps failing
+export const PAIR_RSSI = -30; // stronger than this = held against the phone
 
 export type Pairing = { mac: string; ids: Set<string>; baseline: number | null; pressed: boolean; rssi: number | null; since: number };
 
