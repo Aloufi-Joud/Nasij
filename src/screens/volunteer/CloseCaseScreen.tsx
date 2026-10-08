@@ -10,15 +10,16 @@ import ReportPhoto from './ReportPhoto';
 import { CLOSED_UI, whoLine } from './labels';
 import { latinDigits } from '../../components/digits';
 
-// code: handover code of the report, null on older reports (no check then)
-type Props = { report: Report; code: string | null; onConfirm: (as: ClosedAs) => void; onCancel: () => void };
+// code: handover code of the report; null on older reports (no check then);
+// undefined while it could not be loaded, which blocks "handed to the family" (fails closed)
+type Props = { report: Report; code: string | null | undefined; onConfirm: (as: ClosedAs) => void; onCancel: () => void };
 
 export default function CloseCaseScreen({ report: r, code, onConfirm, onCancel }: Props) {
   const [choice, setChoice] = useState<ClosedAs | null>(null);
   const [typed, setTyped] = useState('');
-  const needsCode = choice === 'found' && !!code;
-  const wrong = needsCode && typed.length === code.length && typed !== code;
-  const ready = !!choice && (!needsCode || typed === code);
+  const needsCode = choice === 'found' && code !== null;
+  const wrong = needsCode && typed.length === 4 && typed !== code;
+  const ready = !!choice && (!needsCode || (!!code && typed === code));
   const lost = r.type === 'lost';
   const sub: Record<ClosedAs, string> = {
     found: lost ? 'تواصلت مع أهله وصار معهم' : 'وصل أهله وصار معهم',
@@ -64,7 +65,10 @@ export default function CloseCaseScreen({ report: r, code, onConfirm, onCancel }
         })}
       </View>
 
-      {needsCode && (
+      {needsCode && code === undefined && (
+        <Text style={s.codeWrong}>ما قدرنا نجيب رمز التسليم، تأكد من الإنترنت وارجع لهالشاشة. إذا ما ضبط، سلّمه لنقطة الأمن</Text>
+      )}
+      {needsCode && !!code && (
         <View style={[ui.card, { marginTop: 14 }]}>
           <Text style={s.codeTitle}>رمز التسليم</Text>
           <Text style={ui.muted}>اطلب من ولي الأمر يفتح تطبيق نسيج ويقرأ لك الرمز، وتأكد إن {r.member.name} يعرفه ويرتاح له</Text>

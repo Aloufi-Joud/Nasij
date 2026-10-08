@@ -48,7 +48,8 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
   const [locationDenied, setLocationDenied] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [languages, setLanguages] = useState<Language[]>(['ar']);
-  const [handoverCode, setHandoverCode] = useState<string | null>(null); // of the active case, never shown
+  // Handover code of the active case, never shown. null = older report without one, undefined = not loaded yet
+  const [handoverCode, setHandoverCode] = useState<string | null | undefined>(undefined);
   const skipped = useRef(new Set<string>()); // reports this volunteer left for others: not shown again by itself
   const accepting = useRef<string | null>(null);
 
@@ -144,6 +145,23 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // Family phone and handover code; tried again on each step change while it has not loaded
+  const activeId = active?.id;
+  useEffect(() => {
+    if (!activeId || handoverCode !== undefined) return;
+    let stale = false;
+    getReportContact(activeId)
+      .then(({ phone, code }) => {
+        if (stale) return;
+        setActive((a) => (a && a.id === activeId ? { ...a, phone } : a));
+        setHandoverCode(code);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [activeId, handoverCode, step]);
+
   // Passer-by reports for the bracelet of the open case
   useEffect(() => {
     if (!active) return;
@@ -203,13 +221,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
         .then((health) => setActive((a) => (a && a.id === r.id ? { ...a, health } : a)))
         .catch(() => {})
         .finally(() => setHealthLoading(false));
-      setHandoverCode(null);
-      getReportContact(r.id)
-        .then(({ phone, code }) => {
-          setActive((a) => (a && a.id === r.id ? { ...a, phone } : a));
-          setHandoverCode(code);
-        })
-        .catch(() => {});
+      setHandoverCode(undefined);
     } catch {
       setNotice({ text: 'تعذّر قبول البلاغ، تحقق من الإنترنت وحاول مرة ثانية', tone: 'danger' });
     } finally {
@@ -231,7 +243,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
     if (!active) return;
     setClosed((old) => [{ id: active.id, name: active.member.name, type: active.type, closedAs: as, at: Date.now() }, ...old]);
     setActive(null);
-    setHandoverCode(null);
+    setHandoverCode(undefined);
     setPasserby([]);
     setHealthLoading(false);
     setStep('proximity');
