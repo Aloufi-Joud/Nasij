@@ -37,13 +37,14 @@ import { C, ui } from '../../theme';
 
 | Type | What it is |
 |------|------------|
-| `Member` | Person wearing a bracelet: name, `child` or `elder`, age, optional `health`, `braceletId` |
+| `Member` | Person wearing a bracelet: name, `child` or `elder`, `gender`, age (max 16 for a child, 120 for an elder: `MAX_AGE`), `language`, family `phone` (required for a child), `description` (how to recognise them), optional `health`, `braceletId`. A family can have several |
 | `Health` | `condition` and `notes` (what a helper should do) |
-| `Report` | A case: type `lost`, `emergency` or `fall`; status `open` / `searching` / `closed`; a copy of the member's name, kind and age; photo, `description` (clothing), `health`, `area` and `location`; `assignedVolunteerId`; `closedAs` `found` / `security` |
+| `Report` | A case: type `lost`, `emergency` or `fall`; status `open` / `searching` / `closed`; a copy of the member's name, kind, age, gender and language; photo, `description` (clothing), `health`, `phone`, `area` and `location`; `assignedVolunteerId`; `closedAs` `found` (handed to the family), `helped` (helped on the spot) or `security` (security or ambulance) |
 | `PasserbyReport` | Passer-by tapped the NFC sticker or QR: bracelet number only, no personal data |
 | `Volunteer` | Name, on duty, area, location |
 | `Sighting` | A volunteer's phone heard a reported bracelet: signal, area and location |
 | `Zone` | Area of the event with a centre and radius, for the dashboard map |
+| `LANGUAGES`, `Language` | The languages a member speaks and a volunteer offers (`ar`, `en`, `ur`, ...) |
 
 The report keeps its own copy of the member's name and health, so a volunteer sees only that one case, and the copy is deleted when the case closes.
 
@@ -94,10 +95,10 @@ npm install
 | File | What it is |
 |------|------------|
 | `App.tsx` | App shell: login, then family or volunteer screens. The switch button in the header changes role and keeps each side's state |
-| `src/screens/LoginScreen.tsx` | Login with email and password (Firebase) and role choice. A new email gets an account on the spot |
-| `src/screens/family/` | Family app: home, map, alerts, emergency card, "my child is lost", "found" |
+| `src/screens/LoginScreen.tsx` | Login with email and password (Firebase) and role choice. A new email gets an account on the spot. "Forgot password" emails a reset link; a wrong email or password shows one message |
+| `src/screens/family/` | Family app: several members (one bracelet each), map, alerts, emergency card, "my child is lost", "found", handover code, profile tab (guardian name and phone) |
 | `src/screens/volunteer/` | Volunteer app (see its README) |
-| `src/components/` | Shared `Header`, `BottomNav`, `Banner`, `Button` |
+| `src/components/` | Shared `Header`, `BottomNav`, `Banner`, `Button`, `LanguagePicker` |
 
 ## Firebase (Phase 2)
 
@@ -110,14 +111,20 @@ import { db, auth } from '../firebase';
 | File | What it is |
 |------|------------|
 | `src/firebase/index.ts` | The connection (`db`, `auth`) |
-| `src/firebase/reports.ts` | `createReport`, `subscribeOpenReports`, `subscribeReport`, `acceptReport`, `getReportHealth`, `closeReport` |
+| `src/firebase/reports.ts` | `createReport`, `subscribeOpenReports`, `subscribeReport`, `acceptReport`, `getReportHealth`, `getReportContact` (family phone and handover code), `closeReport` |
 | `src/firebase/bracelets.ts` | `claimBracelet`, `releaseBracelet`: one family per bracelet per visit |
-| `src/firebase/members.ts` | `saveMember`, `loadMember`, `deleteMember` |
-| `src/firebase/sightings.ts`, `passerby.ts` | Person 3: write these the same way as `reports.ts` |
+| `src/firebase/members.ts` | `saveMember`, `loadMembers`, `deleteMember`. Members live in `members/{id}` with `familyId` |
+| `src/firebase/profile.ts` | `loadProfile`, `saveProfile`: the guardian's name and phone in `users/{uid}` |
+| `src/firebase/volunteers.ts` | `goOnDuty`, `updateVolunteerLocation`, `goOffDuty`, `loadLanguages`, `saveLanguages` |
+| `src/firebase/sightings.ts`, `passerby.ts` | `addSighting`, `subscribeSightings`, `createPasserbyReport`, `subscribePasserbyReports` |
 | `firestore.rules` | Who may read and write what. After changing it, paste it into the Firebase console (Firestore → Rules → Publish) |
 | `src/firebase/check.mjs` | Test script, see below |
 
-**Health is stored apart from the report**, in `reports/{id}/private/health`, so only the family, the assigned volunteer and security can read it. A report in the open list never carries health.
+**Health, the family phone and the handover code are stored apart from the report**, in `reports/{id}/private/health` and `private/contact`, so only the family, the assigned volunteer and security can read them. A report in the open list never carries them.
+
+**Handover code:** each report gets a 4-digit code, shown in the family app. The volunteer must type it before closing as "handed to the family", so a stranger cannot claim the child.
+
+**Language first:** volunteers who speak the member's language get a new report at once, everyone else `LANGUAGE_FIRST_MS` later (15 s for testing) in `src/screens/volunteer/VolunteerApp.tsx`.
 
 **Roles** live in `users/{uid}.role`: `family` or `volunteer` (picked at login), or `security` (set by us, for the dashboard). The rules refuse anything your role is not allowed, so log in to the app first, then test.
 

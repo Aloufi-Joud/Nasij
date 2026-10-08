@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, Vibration, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { State, type Device } from 'react-native-ble-plx';
-import MapView, { Circle } from 'react-native-maps';
+import MapView, { Circle, Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { C, ui } from '../../theme';
 import { LANGUAGES, MAX_AGE, type Gender, type Kind, type Language, type Member, type Point, type Report, type ReportType } from '../../mock';
@@ -145,6 +145,15 @@ function identify(device: Device): string | null {
 function forget(mac: string) {
   delete tracks[mac];
   for (const [id, m] of knownIds) if (m === mac) knownIds.delete(id);
+}
+
+// The point `metres` away from p in direction `deg` (0 = north), for the name on each circle's edge
+function offset(p: Point, metres: number, deg: number): Point {
+  const rad = (deg * Math.PI) / 180;
+  return {
+    latitude: p.latitude + (metres * Math.cos(rad)) / 111_320,
+    longitude: p.longitude + (metres * Math.sin(rad)) / (111_320 * Math.cos((p.latitude * Math.PI) / 180)),
+  };
 }
 
 function getZone(ageMs: number, smooth: number, current: Zone | null): Zone {
@@ -591,20 +600,20 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
               fillColor="transparent"
             />
           )}
-          {members.map((m) => {
+          {/* One circle per bracelet, all around the parent (the signal gives distance, not direction),
+              with the member's name on its edge. Names sit at different angles so equal circles do not hide each other. */}
+          {members.map((m, i) => {
             const l = liveOf(m);
-            return (
-              l?.zone && (
-                <Circle
-                  key={m.id}
-                  center={me}
-                  radius={l.radius}
-                  strokeColor={ZONE_UI[l.zone].color}
-                  strokeWidth={2}
-                  fillColor={CIRCLE_FILL[l.zone]}
-                />
-              )
-            );
+            if (!l?.zone) return null;
+            const color = ZONE_UI[l.zone].color;
+            return [
+              <Circle key={`c-${m.id}`} center={me} radius={l.radius} strokeColor={color} strokeWidth={2} fillColor={CIRCLE_FILL[l.zone]} />,
+              <Marker key={`n-${m.id}`} coordinate={offset(me, l.radius, (i * 70) % 360)} anchor={{ x: 0.5, y: 0.5 }}>
+                <View style={[s.mapName, { borderColor: color }]}>
+                  <Text style={[s.mapNameText, { color }]}>{m.name}</Text>
+                </View>
+              </Marker>,
+            ];
           })}
         </MapView>
       ) : (
@@ -1204,6 +1213,8 @@ const s = StyleSheet.create({
   sosBtnText: { color: C.danger, fontSize: 16, fontWeight: '700' },
 
   mapBox: { width: '100%', borderRadius: 20, overflow: 'hidden', backgroundColor: '#E5E1D6', justifyContent: 'center', borderWidth: 1.5, borderColor: C.border },
+  mapName: { backgroundColor: '#fff', borderWidth: 1.5, borderRadius: 10, paddingVertical: 2, paddingHorizontal: 8 },
+  mapNameText: { fontSize: 12, fontWeight: '700' },
   mapWait: { textAlign: 'center', color: C.muted },
   mapNote: { color: C.muted, fontSize: 14, textAlign: 'center', marginTop: 10 },
 

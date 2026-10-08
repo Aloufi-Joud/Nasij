@@ -134,12 +134,26 @@ The family side works on a real iPhone with the real bracelet (tested before the
 - [x] **Volunteer proximity screen on the real bracelet:** it follows the reported bracelet's live signal, with the agreed direction method
 - [x] Volunteer app (Person 3): on-duty toggle, alert card, proximity screen, health screen, close case, all with fake data
 
+**Done on 2026-10-08, not yet tested on the iPhone:**
+
+- [x] Several members per family, each with its own bracelet, report and alerts
+- [x] Member form: gender, language (list picker), family phone (required for a child), how to recognise them; max age 16 for a child, 120 for an elder
+- [x] Bracelet alerts (double press, possible fall) send the member's description, not the alarm text
+- [x] Linking needs the bracelet held against the phone (signal −35 or stronger)
+- [x] Handover code: 4 digits in the family app; the volunteer types it before handing the child to the family
+- [x] Volunteer sees the family phone and calls it directly, so a lost child no longer has to go through security
+- [x] Language first: volunteers who speak the member's language get the report at once, others 15 s later, with a "speaks their language" badge
+- [x] Close case options: handed to the family, helped on the spot (emergency only), or handed to security / ambulance
+- [x] Family profile tab: guardian name and phone (fills in new members)
+- [x] Login: "forgot password" link, one message for a wrong email or password
+
 ## 7. App screens
 
 | Area | Screen | Status |
 | --- | --- | --- |
-| Shared | Login (email and password) and role choice | Done (fake login) |
-| Family | Add / edit / delete member (with optional health condition) | Done |
+| Shared | Login (email and password) and role choice, forgot password | Done (Firebase Auth) |
+| Family | Add / edit / delete members, several per family (gender, language, phone, description, optional health) | Done, to test on iPhone |
+| Family | Profile: guardian name and phone | Done, to test on iPhone |
 | Family | Link bracelet with press check | Done, to test on iPhone |
 | Family | Home: member card, signal, zone, direction, event boundary | Done |
 | Family | Family map (with event boundary) | Done |
@@ -151,9 +165,10 @@ The family side works on a real iPhone with the real bracelet (tested before the
 | Volunteer | Alert card: child's photo and description, "I'm searching" | Done |
 | Volunteer | Proximity: approaching / moving away + signal | Done (real bracelet), to test on iPhone |
 | Volunteer | Health condition (only to the assigned volunteer) | Done |
-| Volunteer | Close case: found, or handed to security | Done |
-| Web | Passer-by report page (opened by NFC or QR, shows no data) | To do |
-| Web | Security dashboard: map, open reports, live updates | To do |
+| Volunteer | Close case: handed to the family (handover code), helped on the spot, or handed to security | Done, to test on iPhone |
+| Volunteer | Call the family, languages spoken | Done, to test on iPhone |
+| Web | Passer-by report page (opened by NFC or QR, shows no data) | Done (Person 3) |
+| Web | Security dashboard: map, open reports, live updates | Done |
 
 The original interactive prototype had 21 screens and defines the look; build to it.
 
@@ -162,7 +177,7 @@ The original interactive prototype had 21 screens and defines the look; build to
 1. A parent links the bracelet in the app and adds the child (name, age, optional health condition)
 2. The child walks away: the signal weakens and the parent gets an early warning, before the child is lost
 3. If the child is lost, the parent taps "my child is lost": nearby volunteers get temporary access and an alert with the child's photo and description
-4. A volunteer follows the "approaching / moving away" indicator and finds the child; the case closes and access and medical data are deleted
+4. A volunteer follows the "approaching / moving away" indicator and finds the child, calls the parent, and hands the child over only after the parent reads the handover code from their app; the case closes and access, phone and medical data are deleted
 5. An elderly wearer double-presses the bracelet: the emergency alert reaches the family and nearest volunteer in about a second. If they stop moving for 3 minutes, a "please check on them" alert is raised
 6. A passer-by taps the NFC sticker and reports a case without seeing any personal data
 7. The security dashboard shows open cases and sightings live
@@ -225,7 +240,7 @@ All three people build their screens first with fake data, so the whole app can 
 
 **Person 3: volunteer app** (done) **and passer-by page**
 
-- [ ] Passer-by report page (`web/report/`): opened by NFC or QR with the bracelet number in the URL, one "report a case" button, confirmation screen, shows no personal data. Same colours and style as the app
+- [x] Passer-by report page (`web/report/`): opened by NFC or QR with the bracelet number in the URL, one "report a case" button, confirmation screen, shows no personal data. Same colours and style as the app
 
 - [x] On-duty mode toggle
 - [x] Alert card: child's photo and description, "I'm searching" button
@@ -239,13 +254,21 @@ All three people build their screens first with fake data, so the whole app can 
 
 The work is split by topic: Person 2 builds the base everyone uses (Firebase, rules, reports, dashboard), Person 3 owns everything volunteer and passer-by, Person 1 owns everything bracelet and family. Since 2026-10-06 Person 1 also does Person 2's tasks.
 
-**Status 2026-10-07:** Person 1 and Person 2 tasks are done except the event boundary, the volunteer listening (waits for Person 3's `addSighting`) and the work that needs the phones (Mac install, NFC, final integration). Firebase project `nasij-0` is live with the rules published. How to use it: see the Firebase section in the README.
+**Status 2026-10-08:** Person 3 pushed the volunteer and passer-by backend (sightings, passer-by, on-duty location, volunteer screens on live data). Person 1 and Person 2 tasks are done except the event boundary and the work that needs the phones (Mac install, NFC, final integration). Firebase project `nasij-0` is live. How to use it: see the Firebase section in the README.
+
+**Changes on 2026-10-08 that affect everyone** (branch `family-members-languages`):
+
+- `firestore.rules` changed: publish it again (Firebase console → Firestore → Rules → Publish)
+- Members moved from `members/{familyUid}` (one per family) to `members/{id}` with `familyId` (several per family). The dashboard finds a member by bracelet through the bracelet lock
+- `mock.ts`: `Member` has `gender`, `language`, `phone`, `description`; `Report.member` has `gender` and `language`; `Report.phone`; `ClosedAs` adds `helped`; new `LANGUAGES` and `MAX_AGE`
+- Family phone and handover code live in `reports/{id}/private/contact`, next to `private/health`
+- Volunteer screens: `whoLine` shows gender and language; `AlertCard` takes `speaks`; `CloseCaseScreen` takes `code`; `DutyScreen` takes `languages`
 
 **Person 1: Bluetooth, bracelet and family app, final integration**
 
 1. [x] Move the Bluetooth logic (parsing, smoothing, **direction**) into `src/ble/` so the family and volunteer screens share it
 2. [x] Feed real readings into the volunteer proximity screen instead of `useFakeSignal`
-3. [ ] (waits for Person 3's `addSighting`) Volunteer phone listens for bracelets with open reports and calls Person 3's `addSighting`, about once every 10 s per report (stay inside the free plan limits)
+3. [x] (done 2026-10-08, to test with two phones) Volunteer phone listens for bracelets with open reports and calls Person 3's `addSighting`, about once every 10 s per report (stay inside the free plan limits)
 4. [x] Bracelet functions in `src/firebase/bracelets.ts`: `claimBracelet` (after the press check; refuse if another family holds it) and `releaseBracelet`
 5. [x] "End of visit" button: deletes the member's data and releases the bracelet (no Cloud Functions, so the app does it)
 6. [ ] Family app on live data (all done except the event boundary; several members per family, saved in `members/{id}` with `familyId`, and they come back after login with their bracelets):
@@ -263,7 +286,7 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 
 1. [x] Firebase project on the free Spark plan; enable Firestore and Auth with **email and password**
 2. [x] Collections with the same shape as `mock.ts`: `members`, `reports`, `volunteers`, `sightings`, `passerbyReports`, `zones`, plus `users` (role: family, volunteer or security) and `bracelets` (who linked it this visit)
-3. [x] Health data in a separate private document, e.g. `reports/{id}/private/health`. Firestore rules work per document and cannot hide one field, so this is the only way to show health to the assigned volunteer only
+3. [x] Health data in a separate private document, e.g. `reports/{id}/private/health`. Firestore rules work per document and cannot hide one field, so this is the only way to show health to the assigned volunteer only. The family phone and handover code use the same way: `private/contact`
 4. [x] Security rules (`firestore.rules`, published, checked with 50 allow/deny cases on the emulator):
    - a family reads and writes only its own members
    - an on-duty volunteer reads open reports, without health (the rules check the volunteer role; on-duty is not checked yet)
@@ -276,11 +299,11 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 
 **Person 3: volunteer and passer-by on live data**
 
-1. [ ] Sighting functions in `src/firebase/sightings.ts`: `addSighting`, `subscribeSightings`
-2. [ ] Passer-by function in `src/firebase/passerby.ts`: `createPasserbyReport`, and switch the passer-by page to it
-3. [ ] Volunteer screens on Person 2's functions: `subscribeOpenReports`, `acceptReport`, `closeReport`, and the health document for the assigned volunteer
-4. [ ] Update the volunteer's on-duty status and location in their `volunteers` document
-5. [ ] Remove the volunteer's own direction calculation; use Person 1's readings from `src/ble/`
+1. [x] Sighting functions in `src/firebase/sightings.ts`: `addSighting`, `subscribeSightings`
+2. [x] Passer-by function in `src/firebase/passerby.ts`: `createPasserbyReport`, and switch the passer-by page to it
+3. [x] Volunteer screens on Person 2's functions: `subscribeOpenReports`, `acceptReport`, `closeReport`, and the health document for the assigned volunteer
+4. [x] Update the volunteer's on-duty status and location in their `volunteers` document
+5. [x] Remove the volunteer's own direction calculation; use Person 1's readings from `src/ble/`
 6. [ ] Test the whole volunteer flow with the real bracelet
 
 **Order:**
@@ -298,6 +321,7 @@ The focus now is visible features: build the app first, then harden it step by s
 - **Replay attack:** someone records a child's broadcast and replays it near the parent, so the app shows "near" while the child is gone. Fix: rotating IDs with a secret only the system knows
 - **Volunteer role assigned by staff:** today anyone can pick "volunteer" at login. The role must come from the `users` document, set by staff, and be checked in Firestore rules
 - **Spam on the passer-by page:** limit in Firestore rules, e.g. one report per bracelet per minute
+- **Handover code check on the server:** today the assigned volunteer's app reads the code to compare it, so a fake volunteer could read it. Check it in a Cloud Function instead (comes with staff-assigned volunteer roles)
 - **Linking code at the gate:** a code handed over with the bracelet, on top of the press check
 - **Reunion code** when a child is found, with a fallback if the parent's phone is dead (staff ID check against the gate record)
 - **Copies outlive the case:** the child's photo can stay on volunteers' phones after the report closes

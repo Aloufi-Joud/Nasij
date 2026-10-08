@@ -13,13 +13,15 @@ import { auth } from '../../firebase';
 import { acceptReport, closeReport, getReportContact, getReportHealth, subscribeOpenReports } from '../../firebase/reports';
 import { areaOf, goOffDuty, goOnDuty, loadLanguages, saveLanguages, updateVolunteerLocation } from '../../firebase/volunteers';
 import { subscribePasserbyReports } from '../../firebase/passerby';
+import { addSighting } from '../../firebase/sightings';
 import AlertCard from './AlertCard';
 import CloseCaseScreen from './CloseCaseScreen';
 import DutyScreen, { type Notice } from './DutyScreen';
 import HealthScreen from './HealthScreen';
 import ProximityScreen from './ProximityScreen';
 import { CLOSED_UI, TYPE_UI, clock, since } from './labels';
-import { useBraceletSignal } from '../../ble/scanner';
+import { listen, useBraceletSignal } from '../../ble/scanner';
+import { braceletMac } from '../../ble/signal';
 
 type Tab = 'duty' | 'case' | 'history';
 type Step = 'proximity' | 'health' | 'close';
@@ -161,6 +163,27 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
       stale = true;
     };
   }, [activeId, handoverCode, step]);
+
+  // Search network: while on duty, this phone reports every open report's bracelet it hears as a sighting,
+  // even for cases taken by someone else. Other bracelets are ignored. addSighting keeps it to one write
+  // per report every 10 s and uses the latest on-duty location.
+  const openRef = useRef<Report[]>([]);
+  useEffect(() => {
+    openRef.current = open;
+  });
+  useEffect(() => {
+    if (!onDuty) return;
+    const reportOf = (mac: string) => openRef.current.find((r) => r.braceletId.toUpperCase() === mac);
+    // iPhone hides the MAC: learn the phone-side id from EA00, then match the other packets by id
+    const ids = new Map<string, string>();
+    return listen((d) => {
+      const mac = braceletMac(d);
+      if (mac && reportOf(mac)) ids.set(d.id, mac);
+      const b = ids.get(d.id);
+      const r = b && reportOf(b);
+      if (r && d.rssi != null) addSighting(r.id, d.rssi).catch(() => {});
+    });
+  }, [onDuty]);
 
   // Passer-by reports for the bracelet of the open case
   useEffect(() => {
