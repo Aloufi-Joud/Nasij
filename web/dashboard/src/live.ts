@@ -62,12 +62,14 @@ export function useLive() {
   const volunteers = useCollection<Volunteer>('volunteers', where('onDuty', '==', true));
   const sightings = useCollection<Sighting>('sightings', where('at', '>=', since));
   const passerby = useCollection<PasserbyReport>('passerbyReports', where('at', '>=', since));
-  // Bracelet number → family → member, to name the child a passer-by found
+  // Bracelet number → family (from the server-side lock) → that family's member wearing it.
+  // The lock decides the family, so another family writing the same braceletId on their member is ignored.
   const bracelets = useCollection<{ id: string; familyId: string }>('bracelets');
-  const members = useCollection<Member>('members');
+  const members = useCollection<Member & { familyId: string }>('members');
   const memberOf = (braceletId: string) => {
-    const familyId = bracelets.find((b) => b.id === braceletId.toUpperCase())?.familyId;
-    return members.find((m) => m.id === familyId);
+    const mac = braceletId.toUpperCase();
+    const familyId = bracelets.find((b) => b.id === mac)?.familyId;
+    return members.find((m) => m.familyId === familyId && m.braceletId?.toUpperCase() === mac);
   };
 
   const name = (id: string) => volunteers.find((v) => v.id === id)?.name ?? 'متطوع';

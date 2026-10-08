@@ -2,9 +2,9 @@
 // Same shape as Volunteer in mock.ts. The document exists only while the volunteer is on duty:
 // going off duty deletes it, so their location is not kept after the shift (PDPL).
 // The security dashboard reads volunteers where onDuty == true.
-import { deleteDoc, doc, setDoc } from 'firebase/firestore';
+import { deleteDoc, doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from './index';
-import { zones, type Point, type Volunteer } from '../mock';
+import { zones, type Language, type Point, type Volunteer } from '../mock';
 import { metresBetween } from '../components/geo';
 
 const volunteerDoc = (uid: string) => doc(db, 'volunteers', uid);
@@ -59,4 +59,16 @@ export async function goOffDuty(): Promise<void> {
   duty = null;
   last = null;
   if (d) await deleteDoc(volunteerDoc(d.uid));
+}
+
+// Languages the volunteer speaks, kept in users/{uid} so they survive the next login
+export async function loadLanguages(): Promise<Language[] | null> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) return null;
+  return ((await getDoc(doc(db, 'users', uid))).data()?.languages as Language[] | undefined) ?? null;
+}
+
+export async function saveLanguages(languages: Language[]): Promise<void> {
+  const uid = auth.currentUser?.uid;
+  if (uid) await setDoc(doc(db, 'users', uid), { languages }, { merge: true });
 }

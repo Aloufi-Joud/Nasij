@@ -8,10 +8,10 @@ import { Linking, Pressable, ScrollView, StyleSheet, Text, Vibration, View } fro
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { C, F, ui } from '../../theme';
-import type { ClosedAs, PasserbyReport, Report } from '../../mock';
+import type { ClosedAs, Language, PasserbyReport, Report } from '../../mock';
 import { auth } from '../../firebase';
-import { acceptReport, closeReport, getReportHealth, subscribeOpenReports } from '../../firebase/reports';
-import { areaOf, goOffDuty, goOnDuty, updateVolunteerLocation } from '../../firebase/volunteers';
+import { acceptReport, closeReport, getReportContact, getReportHealth, subscribeOpenReports } from '../../firebase/reports';
+import { areaOf, goOffDuty, goOnDuty, loadLanguages, saveLanguages, updateVolunteerLocation } from '../../firebase/volunteers';
 import { subscribePasserbyReports } from '../../firebase/passerby';
 import AlertCard from './AlertCard';
 import CloseCaseScreen from './CloseCaseScreen';
@@ -25,6 +25,10 @@ type Tab = 'duty' | 'case' | 'history';
 type Step = 'proximity' | 'health' | 'close';
 // What stays on the phone after closing: no photo, no description, no health data
 type Closed = { id: string; name: string; type: Report['type']; closedAs: ClosedAs | null; at: number };
+
+// Volunteers who speak the member's language get a new report first, everyone else this much later.
+// ponytail: 15 s for testing; a minute or two at the event
+const LANGUAGE_FIRST_MS = 15_000;
 
 const vibrateFor = (r: Report) => Vibration.vibrate(r.type === 'lost' ? [0, 400, 200, 400] : [0, 800, 300, 800, 300, 800]);
 
@@ -42,7 +46,10 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
   const [passerby, setPasserby] = useState<PasserbyReport[]>([]);
   const [area, setArea] = useState('');
   const [locationDenied, setLocationDenied] = useState(false);
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  const [languages, setLanguages] = useState<Language[]>(['ar']);
+  // Handover code of the active case, never shown. null = older report without one, undefined = not loaded yet
+  const [handoverCode, setHandoverCode] = useState<string | null | undefined>(undefined);
   const skipped = useRef(new Set<string>()); // reports this volunteer left for others: not shown again by itself
   const accepting = useRef<string | null>(null);
 
@@ -56,6 +63,17 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  useEffect(() => {
+    loadLanguages().then((l) => l && setLanguages(l)).catch(() => {});
+  }, []);
+  const toggleLanguage = (l: Language) => {
+    const next = languages.includes(l) ? languages.filter((x) => x !== l) : [...languages, l];
+    setLanguages(next);
+    saveLanguages(next).catch(() => {});
+  };
+  // Older reports carry no language: everyone counts as a speaker
+  const speaks = (r: Report) => !r.member.language || languages.includes(r.member.language);
 
   // Leaving the app (logout): go off duty, so the location is not kept
   useEffect(() => () => void goOffDuty().catch(() => {}), []);
@@ -89,16 +107,20 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
     };
   }, [onDuty]);
 
-  // A new open report: show it, unless busy or already left for others
+  // A new open report: show it, unless busy or already left for others.
+  // Speakers of the member's language get it at once, the rest after LANGUAGE_FIRST_MS.
   useEffect(() => {
     if (!onDuty || active || shownId) return;
-    const next = open.find((r) => r.status === 'open' && !skipped.current.has(r.id));
+    const next = open.find(
+      (r) => r.status === 'open' && !skipped.current.has(r.id) && (speaks(r) || now - r.createdAt >= LANGUAGE_FIRST_MS),
+    );
     if (!next) return;
     setShownId(next.id);
     setTab('duty');
     setNotice(null);
     vibrateFor(next);
-  }, [open, onDuty, active, shownId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, onDuty, active, shownId, now, languages]);
 
   // The shown report was taken by another volunteer or closed before this one answered
   useEffect(() => {
@@ -122,6 +144,23 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // Family phone and handover code; tried again on each step change while it has not loaded
+  const activeId = active?.id;
+  useEffect(() => {
+    if (!activeId || handoverCode !== undefined) return;
+    let stale = false;
+    getReportContact(activeId)
+      .then(({ phone, code }) => {
+        if (stale) return;
+        setActive((a) => (a && a.id === activeId ? { ...a, phone } : a));
+        setHandoverCode(code);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [activeId, handoverCode, step]);
 
   // Passer-by reports for the bracelet of the open case
   useEffect(() => {
@@ -173,7 +212,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
       }
       setShownId(null);
       Vibration.cancel();
-      setActive({ ...r, status: 'searching', assignedVolunteerId: uid, health: null });
+      setActive({ ...r, status: 'searching', assignedVolunteerId: uid, health: null, phone: null });
       setStep(r.type === 'lost' ? 'proximity' : 'health');
       setTab('case');
       // Health is readable only now that this volunteer is assigned
@@ -182,6 +221,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
         .then((health) => setActive((a) => (a && a.id === r.id ? { ...a, health } : a)))
         .catch(() => {})
         .finally(() => setHealthLoading(false));
+      setHandoverCode(undefined);
     } catch {
       setNotice({ text: 'تعذّر قبول البلاغ، تحقق من الإنترنت وحاول مرة ثانية', tone: 'danger' });
     } finally {
@@ -203,6 +243,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
     if (!active) return;
     setClosed((old) => [{ id: active.id, name: active.member.name, type: active.type, closedAs: as, at: Date.now() }, ...old]);
     setActive(null);
+    setHandoverCode(undefined);
     setPasserby([]);
     setHealthLoading(false);
     setStep('proximity');
@@ -256,7 +297,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
       <ScrollView contentContainerStyle={s.body}>
         {tab === 'duty' && (
           <>
-            {incoming && <AlertCard report={incoming} now={now} onAccept={accept} onDecline={skip} />}
+            {incoming && <AlertCard report={incoming} now={now} speaks={speaks(incoming)} onAccept={accept} onDecline={skip} />}
             {active && (
               <Pressable style={[ui.strip, { backgroundColor: C.warnBg }]} onPress={() => setTab('case')}>
                 <Ionicons name="arrow-back" size={15} color={C.warn} />
@@ -278,8 +319,18 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
                 setShownId(r.id);
                 setNotice(null);
               }}
+              languages={languages}
+              onToggleLanguage={toggleLanguage}
             />
           </>
+        )}
+
+        {/* The family's phone: the volunteer calls them directly, no handover to security needed */}
+        {tab === 'case' && active?.phone && (
+          <Pressable style={[ui.strip, { backgroundColor: C.safeBg }]} onPress={() => Linking.openURL(`tel:${active.phone}`)}>
+            <Ionicons name="call-outline" size={16} color={C.safe} />
+            <Text style={[ui.stripText, { color: C.safe }]}>اتصل بأهل {active.member.name}: {active.phone}</Text>
+          </Pressable>
         )}
 
         {tab === 'case' && active && latestPasserby && (
@@ -323,7 +374,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
               goToLabel={active.type === 'lost' ? 'رجوع للبحث' : 'اتجه إليه'}
             />
           ) : (
-            <CloseCaseScreen report={active} onConfirm={closeCase} onCancel={() => setStep('proximity')} />
+            <CloseCaseScreen report={active} code={handoverCode} onConfirm={closeCase} onCancel={() => setStep('proximity')} />
           ))}
 
         {tab === 'history' && (

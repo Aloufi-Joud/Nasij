@@ -248,7 +248,7 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 3. [ ] (waits for Person 3's `addSighting`) Volunteer phone listens for bracelets with open reports and calls Person 3's `addSighting`, about once every 10 s per report (stay inside the free plan limits)
 4. [x] Bracelet functions in `src/firebase/bracelets.ts`: `claimBracelet` (after the press check; refuse if another family holds it) and `releaseBracelet`
 5. [x] "End of visit" button: deletes the member's data and releases the bracelet (no Cloud Functions, so the app does it)
-6. [ ] Family app on live data (all done except the event boundary; members are saved in `members/{familyUid}` and come back after login):
+6. [ ] Family app on live data (all done except the event boundary; several members per family, saved in `members/{id}` with `familyId`, and they come back after login with their bracelets):
    - [x] real login with email and password
    - [x] "my child is lost" calls `createReport`
    - [x] double press and possible fall create an `emergency` / `fall` report automatically, so it reaches the nearest volunteer (journey step 5)

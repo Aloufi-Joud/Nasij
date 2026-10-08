@@ -2,7 +2,8 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { C, F, ui } from '../../theme';
-import type { Report, ReportType } from '../../mock';
+import type { Language, Report, ReportType } from '../../mock';
+import { LanguagePicker } from '../../components/LanguagePicker';
 import { TYPE_UI, since } from './labels';
 
 export type Notice = { text: string; tone: 'safe' | 'warn' | 'danger' };
@@ -19,6 +20,8 @@ type Props = {
   waiting: Report[]; // open reports nobody has taken yet
   now: number;
   onShow: (report: Report) => void;
+  languages: Language[]; // languages this volunteer speaks
+  onToggleLanguage: (l: Language) => void;
 };
 
 const TONE = {
@@ -79,6 +82,10 @@ export default function DutyScreen(p: Props) {
         {p.busy && <Text style={s.locked}>أغلق البلاغ الحالي قبل إنهاء المناوبة</Text>}
       </View>
 
+      <Text style={ui.caption}>اللغات اللي تتكلمها</Text>
+      <LanguagePicker multi selected={p.languages} onPick={p.onToggleLanguage} />
+      <Text style={s.langHint}>بلاغات من يتكلم لغتك توصلك أول</Text>
+
       <View style={s.stats}>
         <View style={s.stat}>
           <Text style={s.statNum}>{p.onDuty ? p.waiting.length : '—'}</Text>
@@ -131,6 +138,8 @@ const s = StyleSheet.create({
   detail: { flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 7 },
   detailText: { color: C.muted, fontSize: F.small, textAlign: 'right', flex: 1 },
   locked: { color: C.warn, fontSize: 12.5, fontWeight: '600', textAlign: 'right', marginTop: 10 },
+
+  langHint: { color: C.faint, fontSize: 12, textAlign: 'right', marginTop: 6 },
 
   stats: { flexDirection: 'row-reverse', gap: 12, marginTop: 14 },
   stat: { flex: 1, backgroundColor: C.card, borderWidth: 1.5, borderColor: C.border, borderRadius: 14, padding: 13 },

@@ -1,7 +1,7 @@
 // Login and role choice with Firebase Auth (email and password).
 // A new email is signed up on the spot, so the demo needs no separate sign-up screen.
 import { useState } from 'react';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+import { createUserWithEmailAndPassword, sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -23,6 +23,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
   const [role, setRole] = useState<Role | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
   // Firebase Auth needs a valid email and a password of 6 or more characters
   const ready = /^\S+@\S+\.\S+$/.test(email.trim()) && password.length >= 6 && !!role && !busy;
 
@@ -30,6 +31,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
     if (!role) return;
     setBusy(true);
     setError('');
+    setInfo('');
     try {
       const mail = email.trim();
       const cred = await signInWithEmailAndPassword(auth, mail, password).catch(async (e) => {
@@ -40,8 +42,9 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
       await setDoc(doc(db, 'users', cred.user.uid), { email: mail, role }, { merge: true });
       onLogin(role);
     } catch (e: any) {
+      // One message for a wrong email or password, so the screen never tells which emails have accounts
       setError(
-        e.code === 'auth/email-already-in-use' || e.code === 'auth/wrong-password' ? 'كلمة المرور غير صحيحة'
+        e.code === 'auth/email-already-in-use' || e.code === 'auth/wrong-password' ? 'البريد أو كلمة المرور غير صحيحة'
         : e.code === 'auth/network-request-failed' ? 'لا يوجد اتصال بالإنترنت'
         : e.code === 'auth/too-many-requests' ? 'محاولات كثيرة، حاول بعد قليل'
         : 'تعذر تسجيل الدخول، حاول مرة أخرى',
@@ -49,6 +52,15 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
     } finally {
       setBusy(false);
     }
+  };
+
+  // Same message whether or not the email has an account
+  const resetPassword = async () => {
+    const mail = email.trim();
+    if (!/^\S+@\S+\.\S+$/.test(mail)) return setError('اكتب بريدك الإلكتروني أول');
+    setError('');
+    await sendPasswordResetEmail(auth, mail).catch(() => {});
+    setInfo('إذا كان البريد مسجّلًا، بيوصلك رابط لتغيير كلمة المرور');
   };
 
   return (
@@ -103,7 +115,12 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
         );
       })}
 
+      <Pressable onPress={resetPassword} hitSlop={8} style={{ marginTop: 10 }}>
+        <Text style={s.forgot}>نسيت كلمة المرور؟</Text>
+      </Pressable>
+
       {!!error && <Text style={s.error}>{error}</Text>}
+      {!!info && <Text style={s.info}>{info}</Text>}
       <Button label={busy ? 'جارٍ الدخول…' : 'دخول'} onPress={login} disabled={!ready} style={{ marginTop: 22 }} />
     </ScrollView>
   );
@@ -126,5 +143,7 @@ const s = StyleSheet.create({
   roleOn: { borderColor: C.primary },
   roleIcon: { width: 48, height: 48, borderRadius: 14, backgroundColor: C.techBg, alignItems: 'center', justifyContent: 'center' },
   error: { color: C.danger, fontSize: F.body, textAlign: 'right', marginTop: 14 },
+  info: { color: C.safe, fontSize: F.body, textAlign: 'right', marginTop: 14 },
+  forgot: { color: C.accent, fontSize: 13.5, fontWeight: '600', textAlign: 'right' },
   roleTitle: { color: C.primary, fontSize: F.h2, fontWeight: '700', textAlign: 'right', marginBottom: 2 },
 });

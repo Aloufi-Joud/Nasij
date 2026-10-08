@@ -2,7 +2,7 @@
 import type { ComponentProps } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { C } from '../../theme';
-import type { ClosedAs, Kind, Report, ReportType } from '../../mock';
+import { LANGUAGES, type ClosedAs, type Kind, type Report, type ReportType } from '../../mock';
 
 type Icon = ComponentProps<typeof Ionicons>['name'];
 
@@ -19,11 +19,19 @@ export const KIND_UI: Record<Kind, { label: string; color: string }> = {
 
 export const CLOSED_UI: Record<ClosedAs, { label: string; color: string; icon: Icon }> = {
   found: { label: 'وُجد وسُلِّم لأهله', color: C.safe, icon: 'checkmark-circle' },
-  security: { label: 'سُلِّم لفريق الأمن', color: C.primary, icon: 'shield-checkmark' },
+  security: { label: 'سُلِّم لفريق الأمن أو الإسعاف', color: C.primary, icon: 'shield-checkmark' },
+  helped: { label: 'تمت مساعدته', color: C.safe, icon: 'heart-circle' },
 };
 
+// Older reports have no gender or language
 export function whoLine(r: Report) {
-  return `${KIND_UI[r.member.kind].label} · ${r.member.age} سنة`;
+  const { kind, gender, age, language } = r.member;
+  return [
+    KIND_UI[kind].label,
+    gender && (gender === 'male' ? 'ذكر' : 'أنثى'),
+    `${age} سنة`,
+    language && `يتكلم ${LANGUAGES[language]}`,
+  ].filter(Boolean).join(' · ');
 }
 
 // "منذ دقيقتين" style, short and Arabic

@@ -1,26 +1,33 @@
-// Reports in Firestore. Same shape as Report in mock.ts, except health lives in
-// reports/{id}/private/health: rules work per document, so this is the only way
-// to show health to the assigned volunteer alone.
+// Reports in Firestore. Same shape as Report in mock.ts, except health and the family phone live in
+// reports/{id}/private/health and private/contact: rules work per document, so this is the only way
+// to show them to the assigned volunteer alone.
 import {
   collection, doc, getDoc, onSnapshot, query, runTransaction, where, writeBatch, type DocumentSnapshot,
 } from 'firebase/firestore';
 import { auth, db } from './index';
 import type { ClosedAs, Health, Report } from '../mock';
 
-export type NewReport = Omit<Report, 'id' | 'createdAt' | 'status' | 'assignedVolunteerId' | 'closedAs' | 'closedAt'>;
+export type NewReport = Omit<Report, 'id' | 'createdAt' | 'status' | 'assignedVolunteerId' | 'closedAs' | 'closedAt' | 'phone'> & {
+  phone?: string | null;
+  code?: string; // handover code shown in the family app; the volunteer checks it before handing over
+};
 
 const reports = collection(db, 'reports');
 const healthDoc = (id: string) => doc(db, 'reports', id, 'private', 'health');
-// Reports as listed and followed: health stays in its own document, so it is always null here
-const toReport = (d: DocumentSnapshot): Report => ({ ...(d.data() as Omit<Report, 'id' | 'health'>), id: d.id, health: null });
+const contactDoc = (id: string) => doc(db, 'reports', id, 'private', 'contact');
+// Reports as listed and followed: health and phone stay in their own documents, so they are always null here
+const toReport = (d: DocumentSnapshot): Report => ({
+  ...(d.data() as Omit<Report, 'id' | 'health' | 'phone'>), id: d.id, health: null, phone: null,
+});
 
-export async function createReport({ health, ...r }: NewReport): Promise<string> {
+export async function createReport({ health, phone, code, ...r }: NewReport): Promise<string> {
   const ref = doc(reports);
   const batch = writeBatch(db);
   // familyId: the rules let only this family follow and close its report
   const familyId = auth.currentUser?.uid ?? null;
   batch.set(ref, { ...r, familyId, createdAt: Date.now(), status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null });
   if (health) batch.set(healthDoc(ref.id), health);
+  if (phone || code) batch.set(contactDoc(ref.id), { phone: phone ?? null, code: code ?? null });
   await batch.commit();
   return ref.id;
 }
@@ -56,10 +63,17 @@ export async function getReportHealth(id: string): Promise<Health | null> {
   return snap.exists() ? (snap.data() as Health) : null;
 }
 
-// Closing wipes what was only needed for the search: health and photo
+// Family phone and handover code, for the assigned volunteer
+export async function getReportContact(id: string): Promise<{ phone: string | null; code: string | null }> {
+  const d = (await getDoc(contactDoc(id))).data();
+  return { phone: d?.phone ?? null, code: d?.code ?? null };
+}
+
+// Closing wipes what was only needed for the search: health, phone and photo
 export async function closeReport(id: string, closedAs: ClosedAs): Promise<void> {
   const batch = writeBatch(db);
   batch.update(doc(reports, id), { status: 'closed', closedAs, closedAt: Date.now(), photo: null });
   batch.delete(healthDoc(id));
+  batch.delete(contactDoc(id));
   await batch.commit();
 }

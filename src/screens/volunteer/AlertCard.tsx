@@ -2,13 +2,14 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { C, F, ui } from '../../theme';
-import type { Report } from '../../mock';
+import { LANGUAGES, type Report } from '../../mock';
 import ReportPhoto from './ReportPhoto';
 import { TYPE_UI, since, whoLine } from './labels';
 
-type Props = { report: Report; now: number; onAccept: () => void; onDecline: () => void };
+// speaks = this volunteer speaks the member's language
+type Props = { report: Report; now: number; speaks: boolean; onAccept: () => void; onDecline: () => void };
 
-export default function AlertCard({ report: r, now, onAccept, onDecline }: Props) {
+export default function AlertCard({ report: r, now, speaks, onAccept, onDecline }: Props) {
   const t = TYPE_UI[r.type];
   const lost = r.type === 'lost';
   const urgentText =
@@ -39,10 +40,19 @@ export default function AlertCard({ report: r, now, onAccept, onDecline }: Props
           </View>
         </View>
 
-        <View style={s.box}>
-          <Text style={s.boxLabel}>{lost ? 'الوصف من الأهل' : 'كيف تتعرف عليه'}</Text>
-          <Text style={s.boxText}>{r.description}</Text>
-        </View>
+        {speaks && r.member.language && r.member.language !== 'ar' && (
+          <View style={s.badge}>
+            <Ionicons name="chatbubbles-outline" size={15} color={C.safe} />
+            <Text style={s.badgeText}>تتكلم لغته ({LANGUAGES[r.member.language]})، أنت الأنسب لهذا البلاغ</Text>
+          </View>
+        )}
+
+        {!!r.description.trim() && (
+          <View style={s.box}>
+            <Text style={s.boxLabel}>{lost ? 'الوصف من الأهل' : 'كيف تتعرف عليه'}</Text>
+            <Text style={s.boxText}>{r.description}</Text>
+          </View>
+        )}
 
         <View style={s.info}>
           <Ionicons name="location-outline" size={15} color={C.accent} />
@@ -81,6 +91,11 @@ const s = StyleSheet.create({
   nameRow: { flexDirection: 'row-reverse', alignItems: 'center', gap: 10, justifyContent: 'center' },
   name: { color: C.primary, fontSize: 22, fontWeight: '700', textAlign: 'right' },
   box: { backgroundColor: C.bg, borderRadius: 12, padding: 12, marginTop: 14 },
+  badge: {
+    flexDirection: 'row-reverse', alignItems: 'center', gap: 7, marginTop: 12,
+    backgroundColor: C.safeBg, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10,
+  },
+  badgeText: { color: C.safe, fontSize: F.small, fontWeight: '700', textAlign: 'right', flex: 1 },
   boxLabel: { color: C.faint, fontSize: 12, fontWeight: '700', textAlign: 'right', marginBottom: 4 },
   boxText: { color: C.text, fontSize: F.body, lineHeight: 23, textAlign: 'right' },
   info: { flexDirection: 'row-reverse', alignItems: 'flex-start', gap: 7, marginTop: 10 },
