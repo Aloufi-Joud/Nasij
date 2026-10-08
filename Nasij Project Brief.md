@@ -264,6 +264,18 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 - Family phone and handover code live in `reports/{id}/private/contact`, next to `private/health`
 - Volunteer screens: `whoLine` shows gender and language; `AlertCard` takes `speaks`; `CloseCaseScreen` takes `code`; `DutyScreen` takes `languages`
 
+**Changes on 2026-10-09 that affect everyone** (same branch):
+
+- After `git pull`, run `npm install`: new packages (`expo-font`, IBM Plex Sans Arabic, `react-native-web`, `react-dom`, `@expo/metro-runtime`)
+- The phone needs a **new development build** (`npx expo run:ios --device` on the Mac): the font is native and does not come through Metro
+- `firestore.rules` changed again (last-seen, stricter sightings): publish it again
+- Use `Text` and `TextInput` from `src/components/Text.tsx`, not from `react-native`: they carry the app font and work in English
+- Every screen string is written as `tr('عربي', 'English')` from `src/i18n.ts`. Keep writing layouts right-to-left (`row-reverse`, `textAlign: 'right'`): in English the app mirrors them by itself
+- Volunteer side runs in a browser for testing: `npx expo start --web` (Bluetooth and maps are stubbed in `src/web/`)
+- The family sees the area and time where a volunteer last heard the bracelet (`reports/{id}/seen/last`), never the volunteer or their exact location
+- Reports carry `memberId`; the family app restores its open reports after a restart and closes orphans. Unlinking a bracelet closes its open report
+- Only one person runs Metro on a machine at a time: two `expo start` on the same folder stop each other
+
 **Person 1: Bluetooth, bracelet and family app, final integration**
 
 1. [x] Move the Bluetooth logic (parsing, smoothing, **direction**) into `src/ble/` so the family and volunteer screens share it
