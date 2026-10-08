@@ -22,6 +22,7 @@ import { signOut } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { claimBracelet, releaseBracelet } from '../../firebase/bracelets';
 import { deleteMember, loadMembers, saveMember } from '../../firebase/members';
+import { loadProfile, saveProfile, type Profile } from '../../firebase/profile';
 import { closeReport, createReport, subscribeReport } from '../../firebase/reports';
 import FoundScreen from './FoundScreen';
 import LostScreen from './LostScreen';
@@ -169,7 +170,7 @@ const CIRCLE_FILL: Record<Zone, string> = {
   LOST: 'rgba(192,57,43,0.10)',
 };
 
-type Tab = 'home' | 'map' | 'alerts';
+type Tab = 'home' | 'map' | 'alerts' | 'profile';
 type Screen = { kind: 'lost' | 'found'; memberId: string } | null;
 
 export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: () => void; onLogout: () => void }) {
@@ -182,6 +183,10 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   const [editing, setEditing] = useState<string | null>('new');
   const [draft, setDraft] = useState<Form>(EMPTY);
   const [saving, setSaving] = useState(false);
+  // The account holder: saved profile, and the copy being edited on the profile tab
+  const [profile, setProfile] = useState<Profile>({ name: '', phone: '' });
+  const [profileDraft, setProfileDraft] = useState<Profile>({ name: '', phone: '' });
+  const [profileSaved, setProfileSaved] = useState(false);
   // Open reports per member id, kept live from Firestore
   const [reports, setReports] = useState<Record<string, Report>>({});
   // Handover code per member id: the volunteer asks for it before handing them over
@@ -350,6 +355,32 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     };
   }, []);
 
+  useEffect(() => {
+    loadProfile()
+      .then((p) => {
+        setProfile(p);
+        setProfileDraft(p);
+        // New members start with the guardian's phone
+        setDraft((d) => (d.phone ? d : { ...d, phone: p.phone }));
+      })
+      .catch(() => {});
+  }, []);
+  const profileError = !profileDraft.name.trim()
+    ? 'اكتب اسمك'
+    : !/^\d{9,15}$/.test(profileDraft.phone)
+      ? 'اكتب رقم جوال صحيح'
+      : null;
+  const saveMyProfile = () => {
+    if (profileError) return;
+    const p = { name: profileDraft.name.trim(), phone: profileDraft.phone };
+    setProfile(p);
+    setProfileSaved(true);
+    saveProfile(p).catch(() => {
+      setProfileSaved(false);
+      failed('تعذر حفظ بياناتك');
+    });
+  };
+
   // The members saved on this account come back after login, with their bracelets
   useEffect(() => {
     loadMembers()
@@ -443,7 +474,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
       photo,
       description,
       health: m.condition ? { condition: m.condition, notes: m.notes } : null,
-      phone: m.phone || null,
+      phone: m.phone || profile.phone || null,
       area: 'قرب موقع العائلة',
       location: me,
     };
@@ -982,7 +1013,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
                 icon="person-add-outline"
                 kind="ghost"
                 onPress={() => {
-                  setDraft(EMPTY);
+                  setDraft({ ...EMPTY, phone: profile.phone });
                   setEditing('new');
                 }}
                 style={{ marginBottom: 14 }}
@@ -1020,6 +1051,48 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
           </>
         )}
 
+        {!screen && tab === 'profile' && (
+          <>
+            <Text style={ui.sectionTitle}>حسابي</Text>
+            <View style={ui.card}>
+              <Text style={s.label}>البريد الإلكتروني</Text>
+              <Text style={s.readOnly}>{auth.currentUser?.email ?? ''}</Text>
+
+              <Text style={s.label}>اسمك</Text>
+              <TextInput
+                style={s.input}
+                value={profileDraft.name}
+                onChangeText={(name) => {
+                  setProfileDraft({ ...profileDraft, name });
+                  setProfileSaved(false);
+                }}
+                placeholder="مثلًا: أبو سنا"
+                placeholderTextColor={C.faint}
+                textAlign="right"
+              />
+
+              <Text style={s.label}>رقم جوالك</Text>
+              <TextInput
+                style={s.input}
+                value={profileDraft.phone}
+                onChangeText={(phone) => {
+                  setProfileDraft({ ...profileDraft, phone: latinDigits(phone).slice(0, 15) });
+                  setProfileSaved(false);
+                }}
+                placeholder="05XXXXXXXX"
+                placeholderTextColor={C.faint}
+                keyboardType="phone-pad"
+                textAlign="right"
+              />
+              <Text style={[s.hint, { marginTop: 6 }]}>يتعبّى تلقائيًا للأفراد الجدد، ويوصل للمتطوع المستلم إذا ما للفرد رقم</Text>
+
+              {!!profileError && !!profileDraft.name.trim() && <Text style={s.formError}>{profileError}</Text>}
+              {profileSaved && <Text style={s.saved}>انحفظت بياناتك</Text>}
+              <Button label="حفظ" onPress={saveMyProfile} disabled={!!profileError} style={{ marginTop: 12 }} />
+            </View>
+          </>
+        )}
+
         {!screen && tab === 'alerts' && (
           <>
             <Text style={ui.sectionTitle}>التنبيهات</Text>
@@ -1048,6 +1121,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
           { key: 'home', label: 'الرئيسية', icon: 'home-outline', dot: openCount > 0 },
           { key: 'map', label: 'الخريطة', icon: 'map-outline' },
           { key: 'alerts', label: 'التنبيهات', icon: 'notifications-outline' },
+          { key: 'profile', label: 'حسابي', icon: 'person-circle-outline', dot: !profile.phone },
         ]}
       />
     </View>
@@ -1111,6 +1185,8 @@ const s = StyleSheet.create({
   code: { color: C.primary, fontSize: 30, fontWeight: '700', letterSpacing: 8, marginVertical: 2 },
   codeHint: { color: C.muted, fontSize: 12, textAlign: 'center' },
   linkPanel: { marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border },
+  readOnly: { color: C.text, fontSize: 15, textAlign: 'right' },
+  saved: { color: C.safe, fontSize: 13, fontWeight: '600', textAlign: 'right', marginTop: 12 },
   formError: { color: C.danger, fontSize: 13, fontWeight: '600', textAlign: 'right', marginTop: 12 },
   techText: { color: C.primary, fontSize: 12, textAlign: 'right', marginBottom: 2 },
 
