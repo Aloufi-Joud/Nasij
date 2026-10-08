@@ -390,6 +390,9 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
       stopState();
       stopScan();
       clearInterval(timer);
+      // Leaving the screen never drops a waiting help request: send it now (fails safe)
+      for (const mac of Object.keys(pendingSos.current)) autoReport.current('emergency', mac);
+      pendingSos.current = {};
     };
   }, []);
 
@@ -640,12 +643,17 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     delete pendingSos.current[mac];
     setSosPending({ ...pendingSos.current });
     addLog('CANCELLED', who);
-    dismissSos();
+    if (sos?.mac === mac) dismissSos();
   };
   const sendSosNow = (mac: string) => {
     if (pendingSos.current[mac]) pendingSos.current[mac] = 0; // the next tick sends it
   };
-  const sosLeft = sos && sosPending[sos.mac] !== undefined ? Math.max(0, Math.ceil((sosPending[sos.mac] - now) / 1000)) : null;
+  const leftFor = (mac: string) => Math.max(0, Math.ceil((sosPending[mac] - now) / 1000));
+  // Countdown only on a help-request card; a fall card never shows the cancel buttons
+  const sosLeft = sos?.kind === 'SOS' && sosPending[sos.mac] !== undefined ? leftFor(sos.mac) : null;
+  // Other bracelets' presses waiting while the card shows someone else: each can still be cancelled
+  const otherPending = Object.keys(sosPending).filter((mac) => mac !== sos?.mac || sos?.kind !== 'SOS');
+  const nameOfMac = (mac: string) => members.find((m) => m.mac === mac)?.name ?? '';
 
   const btOff = !!bt && bt !== State.PoweredOn;
   const liveOf = (m: FamMember) => (m.mac ? live[m.mac] : undefined);
@@ -1111,6 +1119,17 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
           </FadeIn>
         )}
 
+        {otherPending.map((mac) => (
+          <View key={mac} style={s.pendingRow}>
+            <Text style={s.pendingText}>
+              {tr(`طلب مساعدة من ${nameOfMac(mac)} يوصل للمتطوعين بعد ${leftFor(mac)} ث`, `Help request from ${nameOfMac(mac)} goes to volunteers in ${leftFor(mac)} s`)}
+            </Text>
+            <Pressable onPress={() => cancelSos(mac, nameOfMac(mac))} hitSlop={8}>
+              <Text style={s.pendingCancel}>{tr('ألغِ', 'Cancel')}</Text>
+            </Pressable>
+          </View>
+        ))}
+
         {btOff && <Banner tone="danger" icon="bluetooth" text={tr('شغّلي البلوتوث عشان نتابع الأساور', 'Turn on Bluetooth so we can track the bracelets')} />}
 
         <FadeIn key={screen?.kind ?? (formOpen ? 'form' : tab)}>
@@ -1347,6 +1366,12 @@ const s = StyleSheet.create({
   sosText: { color: '#FDECEA', fontSize: 14, marginTop: 4, textAlign: 'center' },
   sosBtn: { backgroundColor: '#fff', borderRadius: 14, paddingVertical: 11, paddingHorizontal: 34, marginTop: 14 },
   sosBtnText: { color: C.danger, fontSize: 16, fontWeight: '700' },
+  pendingRow: {
+    flexDirection: 'row-reverse', alignItems: 'center', gap: 10, marginBottom: 12,
+    backgroundColor: C.dangerBg, borderRadius: 14, paddingVertical: 10, paddingHorizontal: 14,
+  },
+  pendingText: { flex: 1, color: C.danger, fontSize: 13.5, fontWeight: '600', textAlign: 'right' },
+  pendingCancel: { color: C.danger, fontSize: 14, fontWeight: '700', textDecorationLine: 'underline' },
   sosCountdown: { color: '#fff', fontSize: 15, fontWeight: '700', marginTop: 10, textAlign: 'center' },
   sosRow: { flexDirection: 'row-reverse', gap: 10 },
   sosBtnGhost: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: '#fff', paddingHorizontal: 18 },
