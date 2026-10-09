@@ -51,7 +51,8 @@ service cloud.firestore {
         || (isVolunteer() && resource.data.status == 'open'
             && request.resource.data.status == 'searching'
             && request.resource.data.assignedVolunteerId == me()
-            && changes(['status', 'assignedVolunteerId', 'acceptedAt']))
+            && changes(['status', 'assignedVolunteerId', 'acceptedAt'])
+            && request.resource.data.acceptedAt is int && nearNow(request.resource.data.acceptedAt))
         // the family or the assigned volunteer closes it. Handing a child to the family ('found') needs the
         // family's handover code: the volunteer sends the typed code in `handover`, and it must name a document
         // in /handover, which the volunteer cannot read. ponytail: 6 digits can be brute-forced by script;
