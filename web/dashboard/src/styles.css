@@ -178,3 +178,26 @@ button.feed-row:hover { color: var(--primary); text-decoration: underline; }
 .login button:disabled { opacity: 0.5; }
 .login .ghost { background: transparent; color: var(--primary); border: 1.5px solid var(--border); }
 .login-error { color: var(--danger); margin: 0; }
+.steps-title { font-size: 15px; margin: 18px 0 8px; }
+
+/* Sound toggle, late reports, security point, volunteers, actions */
+.sound {
+  background: rgb(255 255 255 / 0.08); border: 1.5px solid rgb(255 255 255 / 0.25); color: #fff;
+  border-radius: 999px; padding: 4px 14px; font-size: 13px;
+}
+.sound[aria-pressed="false"] { color: var(--mint); border-style: dashed; }
+.stats .of { font-size: 14px; font-weight: 400; color: var(--mint); }
+.stats .warm { background: var(--warn); }
+.stats .warm dt { color: #fff; }
+.report.late { background: var(--dangerBg); }
+.report.late .state { color: var(--danger); font-weight: 700; }
+.row.desk { background: var(--warnBg); border: 1.5px solid var(--warnBorder); }
+.row[aria-current="true"] { outline: 2px solid var(--primary); }
+.row.free strong::after { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--safe); margin-inline-start: 8px; vertical-align: middle; }
+.action { margin-top: 18px; border: 1.5px solid var(--border); border-radius: 14px; padding: 12px 14px; }
+.action h3 { font-size: 15px; color: var(--primary); margin-bottom: 6px; }
+.action p { margin: 0 0 10px; }
+.assign { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; }
+.primary { width: 100%; padding: 10px; border: 0; border-radius: 12px; background: var(--primary); color: #fff; font-weight: 700; }
+.primary:disabled, .ghost:disabled { opacity: 0.5; cursor: default; }
+.error { color: var(--danger); margin: 10px 0 0; }

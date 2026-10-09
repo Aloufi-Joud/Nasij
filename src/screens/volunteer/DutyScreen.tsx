@@ -8,7 +8,7 @@ import { C, F, ui } from '../../theme';
 import type { Language, Report, ReportType } from '../../mock';
 import { LanguagePicker } from '../../components/LanguagePicker';
 import { TYPE_UI, since } from './labels';
-import { isEn, tr } from '../../i18n';
+import { isEn, tr, place } from '../../i18n';
 
 export type Notice = { text: string; tone: 'safe' | 'warn' | 'danger' };
 
@@ -76,7 +76,7 @@ export default function DutyScreen(p: Props) {
               <Text style={s.detailText}>
                 {p.locationDenied
                   ? tr('الموقع غير مفعّل، لن يظهر مكانك لفريق الأمن', 'Location is off, security won’t see where you are')
-                  : tr(`منطقتك: ${p.area || 'خارج مناطق الفعالية'}`, `Your area: ${p.area || 'outside the event zones'}`)}
+                  : tr(`منطقتك: ${p.area || 'خارج مناطق الفعالية'}`, `Your area: ${p.area ? place(p.area) : 'outside the event zones'}`)}
               </Text>
             </View>
             <View style={s.detail}>

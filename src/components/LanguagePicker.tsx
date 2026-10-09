@@ -12,9 +12,9 @@ type Props = { selected: Language[]; onPick: (l: Language) => void; multi?: bool
 
 export function LanguagePicker({ selected, onPick, multi }: Props) {
   const [open, setOpen] = useState(false);
-  // Occasional open/close: a short ease so the list doesn't pop in
+  // Occasional open/close: a short ease-out so the list answers at once and doesn't pop in
   const toggle = (v: boolean) => {
-    LayoutAnimation.configureNext(LayoutAnimation.create(200, 'easeInEaseOut', 'opacity'));
+    LayoutAnimation.configureNext(LayoutAnimation.create(200, 'easeOut', 'opacity'));
     setOpen(v);
   };
   const shown = selected.map(langName).join(tr('، ', ', ')) || tr('اختر', 'Choose');

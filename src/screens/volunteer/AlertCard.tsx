@@ -5,7 +5,7 @@ import { Pressable } from '../../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
 import { C, F, ui } from '../../theme';
 import type { Report } from '../../mock';
-import { langName, tr } from '../../i18n';
+import { langName, tr, place } from '../../i18n';
 import ReportPhoto from './ReportPhoto';
 import { TYPE_UI, since, whoLine } from './labels';
 
@@ -66,7 +66,7 @@ export default function AlertCard({ report: r, now, speaks, onAccept, onDecline 
 
         <View style={s.info}>
           <Ionicons name="location-outline" size={15} color={C.accent} />
-          <Text style={s.infoText}>{tr(`آخر مكان معروف: ${r.area}`, `Last known place: ${r.area}`)}</Text>
+          <Text style={s.infoText}>{tr(`آخر مكان معروف: ${r.area}`, `Last known place: ${place(r.area)}`)}</Text>
         </View>
         {r.health && (
           <View style={s.info}>

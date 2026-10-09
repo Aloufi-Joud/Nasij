@@ -37,11 +37,16 @@ export function Pressable({ style, onPressIn, onPressOut, ...rest }: PressablePr
 }
 
 // Fades and lifts children in on mount. Re-key it to replay (e.g. key={tab}).
-export function FadeIn({ children, style, delay = 0 }: { children: ReactNode; style?: StyleProp<ViewStyle>; delay?: number }) {
+// pop: grows from 0.85 instead of lifting, for the icon of a full-screen notice
+export function FadeIn({ children, style, delay = 0, pop = false }: { children: ReactNode; style?: StyleProp<ViewStyle>; delay?: number; pop?: boolean }) {
   const [v] = useState(() => new Animated.Value(0));
   useEffect(() => {
     Animated.timing(v, { toValue: 1, duration: 220, delay, easing: easeOut, useNativeDriver: true }).start();
   }, [v, delay]);
-  const lift = reduce ? [] : [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }];
+  const lift = reduce
+    ? []
+    : pop
+      ? [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }]
+      : [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }];
   return <Animated.View style={[style, { opacity: v, transform: lift }]}>{children}</Animated.View>;
 }

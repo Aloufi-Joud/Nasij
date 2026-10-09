@@ -57,8 +57,11 @@ export type Report = {
   createdAt: number; // ms since epoch
   status: ReportStatus;
   assignedVolunteerId: string | null;
+  acceptedAt?: number | null; // when a volunteer took the case, for the case timeline
   closedAs: ClosedAs | null;
   closedAt: number | null;
+  reunitedAt?: number | null; // closed as 'security': when security handed the person to the family
+  securityPoint?: string | null; // handed to security: where the family picks them up (zone and pavilion)
 };
 
 export type Volunteer = {
@@ -94,6 +97,7 @@ export type PasserbyReport = {
 export type Zone = {
   id: string;
   name: string;
+  en: string; // English name; reports store the Arabic one
   center: Point;
   radius: number; // metres
 };
@@ -104,12 +108,12 @@ const PHOTO_YOUSEF = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAY
 
 // The five Expo 2030 Riyadh zones around the central plaza (petals of the masterplan)
 export const zones: Zone[] = [
-  { id: 'z1', name: 'منطقة المملكة', center: { latitude: 24.9124, longitude: 46.7050 }, radius: 220 },
-  { id: 'z2', name: 'المجتمعات المزدهرة', center: { latitude: 24.9100, longitude: 46.7086 }, radius: 220 },
-  { id: 'z3', name: 'التكنولوجيا التحويلية', center: { latitude: 24.9063, longitude: 46.7072 }, radius: 220 },
-  { id: 'z4', name: 'التعاون الدولي', center: { latitude: 24.9063, longitude: 46.7028 }, radius: 220 },
-  { id: 'z5', name: 'الحلول المستدامة', center: { latitude: 24.9100, longitude: 46.7014 }, radius: 220 },
-  { id: 'z6', name: 'الساحة المركزية', center: { latitude: 24.9090, longitude: 46.7050 }, radius: 130 },
+  { id: 'z1', name: 'منطقة المملكة', en: 'Kingdom Zone', center: { latitude: 24.9124, longitude: 46.7050 }, radius: 220 },
+  { id: 'z2', name: 'المجتمعات المزدهرة', en: 'Thriving Communities', center: { latitude: 24.9100, longitude: 46.7086 }, radius: 220 },
+  { id: 'z3', name: 'التكنولوجيا التحويلية', en: 'Transformative Technology', center: { latitude: 24.9063, longitude: 46.7072 }, radius: 220 },
+  { id: 'z4', name: 'التعاون الدولي', en: 'International Cooperation', center: { latitude: 24.9063, longitude: 46.7028 }, radius: 220 },
+  { id: 'z5', name: 'الحلول المستدامة', en: 'Sustainable Solutions', center: { latitude: 24.9100, longitude: 46.7014 }, radius: 220 },
+  { id: 'z6', name: 'الساحة المركزية', en: 'Central Plaza', center: { latitude: 24.9090, longitude: 46.7050 }, radius: 130 },
 ];
 
 export const ME: Volunteer = {
@@ -162,6 +166,8 @@ export const members: Member[] = [
   },
 ];
 
+// Minutes before the app loaded, so demo screens show "6 minutes ago", not a 1970 date
+const ago = (min: number) => Date.now() - min * 60_000;
 const base = { status: 'open' as ReportStatus, assignedVolunteerId: null, closedAs: null, closedAt: null, phone: null };
 
 export const reports: Report[] = [
@@ -176,7 +182,7 @@ export const reports: Report[] = [
     health: null,
     area: 'منطقة المملكة، قرب المدخل',
     location: { latitude: 24.9121, longitude: 46.7042 },
-    createdAt: 0,
+    createdAt: ago(6),
   },
   {
     ...base,
@@ -189,7 +195,7 @@ export const reports: Report[] = [
     health: members[1].health,
     area: 'الساحة المركزية، عند النافورة',
     location: { latitude: 24.9087, longitude: 46.7052 },
-    createdAt: 0,
+    createdAt: ago(3),
   },
   {
     ...base,
@@ -202,7 +208,7 @@ export const reports: Report[] = [
     health: members[2].health,
     area: 'منطقة الجلوس في المجتمعات المزدهرة',
     location: { latitude: 24.9095, longitude: 46.7083 },
-    createdAt: 0,
+    createdAt: ago(1),
   },
   {
     ...base,
@@ -215,12 +221,12 @@ export const reports: Report[] = [
     health: members[3].health,
     area: 'الممر بين التعاون الدولي والتكنولوجيا التحويلية',
     location: { latitude: 24.9054, longitude: 46.7050 },
-    createdAt: 0,
+    createdAt: ago(2),
   },
 ];
 
 export const sightings: Sighting[] = [];
 
 export const passerbyReports: PasserbyReport[] = [
-  { id: 'p1', braceletId: '785005002F07', at: 0, location: { latitude: 24.9096, longitude: 46.7083 } },
+  { id: 'p1', braceletId: '785005002F07', at: ago(1), location: { latitude: 24.9096, longitude: 46.7083 } },
 ];

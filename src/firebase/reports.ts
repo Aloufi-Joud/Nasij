@@ -2,7 +2,7 @@
 // reports/{id}/private/health and private/contact: rules work per document, so this is the only way
 // to show them to the assigned volunteer alone.
 import {
-  collection, doc, getDoc, getDocs, onSnapshot, query, runTransaction, where, writeBatch, type DocumentSnapshot,
+  collection, doc, getDoc, getDocs, onSnapshot, query, runTransaction, updateDoc, where, writeBatch, type DocumentSnapshot,
 } from 'firebase/firestore';
 import { auth, db } from './index';
 import type { ClosedAs, Health, Report } from '../mock';
@@ -65,7 +65,7 @@ export function acceptReport(id: string, volunteerId: string): Promise<boolean> 
   return runTransaction(db, async (tx) => {
     const snap = await tx.get(doc(reports, id));
     if (snap.data()?.status !== 'open') return false;
-    tx.update(snap.ref, { status: 'searching', assignedVolunteerId: volunteerId });
+    tx.update(snap.ref, { status: 'searching', assignedVolunteerId: volunteerId, acceptedAt: Date.now() });
     return true;
   });
 }
@@ -87,15 +87,33 @@ export async function getHandoverCode(id: string): Promise<string | null> {
   return snap.docs[0]?.id ?? null;
 }
 
+// Security gives a case to a volunteer, or moves it to another one. The volunteer app picks it up by itself
+export function assignReport(id: string, volunteerId: string): Promise<void> {
+  return updateDoc(doc(reports, id), { status: 'searching', assignedVolunteerId: volunteerId, acceptedAt: Date.now() });
+}
+
 // Closing wipes what was only needed for the search: health, phone, photo and the last sighting
 // handover: the code the volunteer typed, needed by the rules to close a child's report as 'found'.
 // A wrong code fails with permission-denied.
-export async function closeReport(id: string, closedAs: ClosedAs, handover?: string): Promise<void> {
+// Handed to security: the person now waits at the security point, so the photo, health and family phone stay
+// for security (volunteers can no longer read a closed report) until reuniteAtSecurity()
+// securityPoint: where security keeps them (zone and pavilion), shown to the family
+export async function closeReport(id: string, closedAs: ClosedAs, handover?: string, securityPoint?: string): Promise<void> {
+  const keep = closedAs === 'security';
   const batch = writeBatch(db);
-  batch.update(doc(reports, id), { status: 'closed', closedAs, closedAt: Date.now(), photo: null, ...(handover ? { handover } : {}) });
+  batch.update(doc(reports, id), { status: 'closed', closedAs, closedAt: Date.now(), ...(keep ? {} : { photo: null }), ...(handover ? { handover } : {}), ...(securityPoint ? { securityPoint } : {}) });
   if (handover) batch.delete(handoverDoc(id, handover));
+  if (!keep) batch.delete(healthDoc(id));
+  if (!keep) batch.delete(contactDoc(id));
+  batch.delete(doc(db, 'reports', id, 'seen', 'last'));
+  await batch.commit();
+}
+
+// Security handed the person to the family at the security point (after checking ID): now wipe the rest
+export async function reuniteAtSecurity(id: string): Promise<void> {
+  const batch = writeBatch(db);
+  batch.update(doc(reports, id), { reunitedAt: Date.now(), photo: null });
   batch.delete(healthDoc(id));
   batch.delete(contactDoc(id));
-  batch.delete(doc(db, 'reports', id, 'seen', 'last'));
   await batch.commit();
 }

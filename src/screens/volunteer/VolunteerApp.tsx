@@ -250,8 +250,15 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
         .then((health) => setActive((a) => (a && a.id === r.id ? { ...a, health } : a)))
         .catch(() => {})
         .finally(() => setHealthLoading(false));
-    } catch {
-      setNotice({ text: tr('تعذّر قبول البلاغ، تحقق من الإنترنت وحاول مرة ثانية', 'Couldn’t accept the report, check the internet and try again'), tone: 'danger' });
+    } catch (e) {
+      // permission-denied is the rules, not the internet (e.g. firestore.rules not published after a change)
+      const denied = (e as { code?: string }).code === 'permission-denied';
+      setNotice({
+        text: denied
+          ? tr('ما عندك صلاحية تقبل هذا البلاغ', 'You’re not allowed to accept this report')
+          : tr('تعذّر قبول البلاغ، تحقق من الإنترنت وحاول مرة ثانية', 'Couldn’t accept the report, check the internet and try again'),
+        tone: 'danger',
+      });
     } finally {
       accepting.current = null;
     }
