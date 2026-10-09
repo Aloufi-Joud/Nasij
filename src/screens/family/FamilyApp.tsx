@@ -217,7 +217,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   // Where a volunteer's phone last heard the bracelet of an open report, per member id
   const [seen, setSeen] = useState<Record<string, LastSeen | null>>({});
   const [screen, setScreen] = useState<Screen>(null);
-  const [justFound, setJustFound] = useState<string | null>(null);
+  const [justFound, setJustFound] = useState<{ name: string; as: Report['closedAs'] } | null>(null);
   const [linkFor, setLinkFor] = useState<string | null>(null); // member whose link panel is open
   const [typedMac, setTypedMac] = useState('');
   const [live, setLive] = useState<Record<string, Live>>({});
@@ -527,7 +527,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         setReports(({ [memberId]: _, ...rest }) => rest);
         setScreen((s) => (s?.memberId === memberId ? null : s));
         if (!r || r.closedAs === 'expired') return; // closed by the hourly cleanup, not because they were found
-        setJustFound(r.member.name);
+        setJustFound({ name: r.member.name, as: r.closedAs });
         addLog('FOUND', r.member.name);
       });
     });
@@ -1164,9 +1164,16 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
 
             {justFound && (
               <Banner
-                tone="safe"
-                icon="checkmark-circle"
-                text={tr(`الحمد لله على سلامة ${justFound}، انقفل البلاغ وانحذفت بياناته`, `So glad ${justFound} is safe. The report is closed and their details deleted`)}
+                tone={justFound.as === 'security' ? 'warn' : 'safe'}
+                icon={justFound.as === 'security' ? 'shield-checkmark' : 'checkmark-circle'}
+                text={
+                  justFound.as === 'security'
+                    ? tr(
+                        `المتطوع سلّم ${justFound.name} لنقطة الأمن، توجّهوا لها مع إثبات الهوية`,
+                        `The volunteer handed ${justFound.name} to a security point. Go there with your ID`,
+                      )
+                    : tr(`الحمد لله على سلامة ${justFound.name}، انقفل البلاغ وانحذفت بياناته`, `So glad ${justFound.name} is safe. The report is closed and their details deleted`)
+                }
                 onPress={() => setJustFound(null)}
               />
             )}
