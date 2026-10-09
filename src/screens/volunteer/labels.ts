@@ -22,6 +22,7 @@ export const CLOSED_UI: Record<ClosedAs, { label: string; color: string; icon: I
   found: { get label() { return tr('وُجد وسُلِّم لأهله', 'Found and handed to family'); }, color: C.safe, icon: 'checkmark-circle' },
   security: { get label() { return tr('سُلِّم لفريق الأمن أو الإسعاف', 'Handed to security or ambulance'); }, color: C.primary, icon: 'shield-checkmark' },
   helped: { get label() { return tr('تمت مساعدته', 'Helped'); }, color: C.safe, icon: 'heart-circle' },
+  expired: { get label() { return tr('انقفل تلقائيًا بعد مدة طويلة', 'Closed automatically after a long time'); }, color: C.faint, icon: 'time' },
 };
 
 // Older reports have no gender or language

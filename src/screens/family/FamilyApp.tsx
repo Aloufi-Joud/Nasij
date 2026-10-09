@@ -25,7 +25,7 @@ import { auth } from '../../firebase';
 import { claimBracelet, releaseBracelet } from '../../firebase/bracelets';
 import { deleteMember, loadMembers, saveMember } from '../../firebase/members';
 import { loadProfile, saveProfile, type Profile } from '../../firebase/profile';
-import { closeReport, createReport, getReportContact, loadMyOpenReports, subscribeReport } from '../../firebase/reports';
+import { closeReport, createReport, getHandoverCode, loadMyOpenReports, subscribeReport } from '../../firebase/reports';
 import { subscribeLastSeen, type LastSeen } from '../../firebase/sightings';
 import FoundScreen from './FoundScreen';
 import LostScreen from './LostScreen';
@@ -441,8 +441,8 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
       }
       setReports(open);
       for (const [memberId, r] of Object.entries(open))
-        getReportContact(r.id)
-          .then(({ code }) => code && setCodes((o) => ({ ...o, [memberId]: code })))
+        getHandoverCode(r.id)
+          .then((code) => code && setCodes((o) => ({ ...o, [memberId]: code })))
           .catch(() => {});
     })().catch(() => {});
   }, []);
@@ -526,7 +526,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         if (r && r.status !== 'closed') return setReports((o) => ({ ...o, [memberId]: r }));
         setReports(({ [memberId]: _, ...rest }) => rest);
         setScreen((s) => (s?.memberId === memberId ? null : s));
-        if (!r) return;
+        if (!r || r.closedAs === 'expired') return; // closed by the hourly cleanup, not because they were found
         setJustFound(r.member.name);
         addLog('FOUND', r.member.name);
       });
@@ -541,7 +541,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   // Volunteers near the bracelet pick it up from Firestore
   const sendReport = async (m: FamMember, type: ReportType, description: string, photo: string | null) => {
     // Handover code for children only: an elder can say who their family is
-    const code = m.kind === 'child' ? String(1000 + Math.floor(Math.random() * 9000)) : undefined;
+    const code = m.kind === 'child' ? String(100000 + Math.floor(Math.random() * 900000)) : undefined;
     const r = {
       type,
       braceletId: m.mac ?? '',

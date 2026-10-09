@@ -9,12 +9,14 @@ import type { ClosedAs, Health, Report } from '../mock';
 
 export type NewReport = Omit<Report, 'id' | 'createdAt' | 'status' | 'assignedVolunteerId' | 'closedAs' | 'closedAt' | 'phone'> & {
   phone?: string | null;
-  code?: string; // handover code shown in the family app; the volunteer checks it before handing over
+  code?: string; // handover code (6 digits, children only), shown in the family app
 };
 
 const reports = collection(db, 'reports');
 const healthDoc = (id: string) => doc(db, 'reports', id, 'private', 'health');
 const contactDoc = (id: string) => doc(db, 'reports', id, 'private', 'contact');
+// The code is the document id, so the rules can check a typed code with exists() while volunteers cannot read it
+const handoverDoc = (id: string, code: string) => doc(db, 'reports', id, 'handover', code);
 // Reports as listed and followed: health and phone stay in their own documents, so they are always null here
 const toReport = (d: DocumentSnapshot): Report => ({
   ...(d.data() as Omit<Report, 'id' | 'health' | 'phone'>), id: d.id, health: null, phone: null,
@@ -25,9 +27,12 @@ export async function createReport({ health, phone, code, ...r }: NewReport): Pr
   const batch = writeBatch(db);
   // familyId: the rules let only this family follow and close its report
   const familyId = auth.currentUser?.uid ?? null;
-  batch.set(ref, { ...r, familyId, createdAt: Date.now(), status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null });
+  batch.set(ref, {
+    ...r, familyId, createdAt: Date.now(), status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null, hasCode: !!code,
+  });
   if (health) batch.set(healthDoc(ref.id), health);
-  if (phone || code) batch.set(contactDoc(ref.id), { phone: phone ?? null, code: code ?? null });
+  if (phone) batch.set(contactDoc(ref.id), { phone });
+  if (code) batch.set(handoverDoc(ref.id, code), {});
   await batch.commit();
   return ref.id;
 }
@@ -71,16 +76,24 @@ export async function getReportHealth(id: string): Promise<Health | null> {
   return snap.exists() ? (snap.data() as Health) : null;
 }
 
-// Family phone and handover code, for the assigned volunteer
-export async function getReportContact(id: string): Promise<{ phone: string | null; code: string | null }> {
-  const d = (await getDoc(contactDoc(id))).data();
-  return { phone: d?.phone ?? null, code: d?.code ?? null };
+// Family phone, for the assigned volunteer
+export async function getReportPhone(id: string): Promise<string | null> {
+  return (await getDoc(contactDoc(id))).data()?.phone ?? null;
+}
+
+// The family's own handover code, to show it again after a restart (volunteers cannot read it)
+export async function getHandoverCode(id: string): Promise<string | null> {
+  const snap = await getDocs(collection(db, 'reports', id, 'handover'));
+  return snap.docs[0]?.id ?? null;
 }
 
 // Closing wipes what was only needed for the search: health, phone, photo and the last sighting
-export async function closeReport(id: string, closedAs: ClosedAs): Promise<void> {
+// handover: the code the volunteer typed, needed by the rules to close a child's report as 'found'.
+// A wrong code fails with permission-denied.
+export async function closeReport(id: string, closedAs: ClosedAs, handover?: string): Promise<void> {
   const batch = writeBatch(db);
-  batch.update(doc(reports, id), { status: 'closed', closedAs, closedAt: Date.now(), photo: null });
+  batch.update(doc(reports, id), { status: 'closed', closedAs, closedAt: Date.now(), photo: null, ...(handover ? { handover } : {}) });
+  if (handover) batch.delete(handoverDoc(id, handover));
   batch.delete(healthDoc(id));
   batch.delete(contactDoc(id));
   batch.delete(doc(db, 'reports', id, 'seen', 'last'));

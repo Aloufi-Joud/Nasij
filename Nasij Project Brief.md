@@ -277,6 +277,10 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 - Only one person runs Metro on a machine at a time: two `expo start` on the same folder stop each other
 - Emergency press: the family app waits 15 s (`SOS_DELAY_MS` in `FamilyApp.tsx`) before the report goes to volunteers, with "mistake, cancel" and "send now". A possible fall still goes at once
 - Handover code is for children only: elder reports have none, so the volunteer closes them without a code
+- Handover code is now **6 digits and checked by the rules**: it lives as a document id in `reports/{id}/handover/{code}`, which volunteers cannot read. The volunteer's typed code goes with the close (`closeReport(id, 'found', code)`), and a wrong code fails with `permission-denied`. Reports carry `hasCode`
+- Passer-by reports are limited to one per bracelet per minute (`passerbyLimits/{bracelet}`, written in the same batch)
+- `ClosedAs` adds `expired`: closed by the hourly cleanup, not by a person
+- **One-time setup for the hourly cleanup** (`scripts/cleanup.mjs`, `.github/workflows/cleanup.yml`): Firebase console → Project settings → Service accounts → Generate new private key. Then GitHub → the repo → Settings → Secrets and variables → Actions → New repository secret, name `FIREBASE_SERVICE_ACCOUNT`, value = the whole JSON file. Never commit that file. The schedule runs from `main`, so it starts after the PR is merged; "Run workflow" in the Actions tab runs it by hand
 
 **Person 1: Bluetooth, bracelet and family app, final integration**
 
@@ -334,8 +338,8 @@ The focus now is visible features: build the app first, then harden it step by s
 - **Fixed MAC in `EA00`:** the bracelet broadcasts its MAC, so "changes every visit" is false. Check with BeaconX Pro + nRF Connect whether the MAC can be removed from `EA00`. If yes, the app must identify bracelets by the per-visit Device ID instead (affects `src/ble/`)
 - **Replay attack:** someone records a child's broadcast and replays it near the parent, so the app shows "near" while the child is gone. Fix: rotating IDs with a secret only the system knows
 - **Volunteer role assigned by staff:** today anyone can pick "volunteer" at login. The role must come from the `users` document, set by staff, and be checked in Firestore rules
-- **Spam on the passer-by page:** limit in Firestore rules, e.g. one report per bracelet per minute
-- **Handover code check on the server:** see "Blocked by the free plan" below
+- **Spam on the passer-by page:** done (one report per bracelet per minute, in the rules). Many different bracelet numbers can still be sent
+- **Handover code:** checked by the rules now; a better check needs the paid plan, see below
 - **Linking code at the gate:** a code handed over with the bracelet, on top of the press check
 - **Reunion code** when a child is found, with a fallback if the parent's phone is dead (staff ID check against the gate record)
 - **Copies outlive the case:** the child's photo can stay on volunteers' phones after the report closes
@@ -344,13 +348,13 @@ The focus now is visible features: build the app first, then harden it step by s
 - **Battery:** the vendor's 1.5 years likely assumes power saving on; measure it with power saving off and 500 ms intervals
 - **Resetting bracelets at the exit gate:** each needs a password connection and a sticker rewrite; time it before promising it
 
-### Blocked by the free plan (needs Firebase Blaze)
+### Free-plan workarounds, and what the paid plan would do better
 
-The project runs on the free Spark plan, which has no Cloud Functions (no code on the server) and no Storage. These fixes are known but cannot be done until the project moves to Blaze (pay as you go; small use stays near free, but it needs a card):
+The project runs on the free Spark plan: no Cloud Functions (no code on the server) and no Storage. Each gap has a free workaround in place; Firebase Blaze (pay as you go, small use stays near free, needs a card) would do it properly:
 
-- **Handover code checked on the server:** today the volunteer's app checks the code, and the rules let the assigned volunteer close a report as "found" without it. Someone calling Firebase directly can skip the code. Fix: a Cloud Function takes the typed code, compares it, and closes the report itself; the volunteer's phone never sees the right code
-- **Cleanup the app cannot be trusted to do:** a report stays open if the family never opens the app again (the app closes orphans only when it starts). Fix: a scheduled function closes reports older than a few hours and deletes their health, phone and photo
-- **Photos:** stored as small base64 text inside the report because there is no Storage; real photos need Storage
-- **Rate limits that need a counter:** e.g. passer-by spam beyond what rules can check
+- **Handover code.** Now: the code is a document id the volunteer cannot read, and the rules only let them close a child's report as "found" if the typed code names that document. Gap: someone with a script can try codes one by one (6 digits = a million tries; the rules cannot count attempts). Better with Blaze: a Cloud Function checks the code and locks the case after a few wrong tries
+- **Closing reports nobody closed.** Now: GitHub Actions runs `scripts/cleanup.mjs` every hour (free), closing reports open more than 6 hours (`closedAs: 'expired'`) and deleting their health, phone, code and last-seen, plus sightings and passer-by reports older than a day. Needs the `FIREBASE_SERVICE_ACCOUNT` secret (see the 2026-10-09 notes). Gap: up to an hour late. Better with Blaze: a scheduled Cloud Function, or one that runs the moment a member is deleted
+- **Photos.** Now: a small base64 image inside the report (fine under Firestore's 1 MB per document). Better with Blaze: Storage for real photos
+- **Passer-by spam.** Now: one report per bracelet per minute in the rules. Gap: someone can still send reports for many made-up bracelet numbers. Better with Blaze: App Check or a function with an IP limit
 
-Possible on the free plan, just not done yet: **volunteer role set by staff** (staff edit `users/{uid}.role` in the Firebase console, and the rules stop users from giving themselves `volunteer`). Note that this alone does not fix the handover code: an assigned volunteer could still close without it.
+Possible on the free plan, postponed until after the demo (it slows down testing): **volunteer role set by staff** (staff edit `users/{uid}.role` in the Firebase console, and the rules stop users from giving themselves `volunteer`).

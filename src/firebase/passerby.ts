@@ -2,7 +2,7 @@
 // The passer-by page (web/report) calls createPasserbyReport with no login: the rules allow
 // exactly three fields, braceletId (12 characters), at and location, and nothing else.
 // No imports from src/ble here: the web page cannot load the Bluetooth library.
-import { addDoc, collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, where, writeBatch } from 'firebase/firestore';
 import { db } from './index';
 import type { PasserbyReport, Point } from '../mock';
 
@@ -18,7 +18,12 @@ export async function createPasserbyReport(braceletId: string, location: Point |
   const id = braceletNumber(braceletId);
   if (!id) throw new Error('bad bracelet number');
   const r: Omit<PasserbyReport, 'id'> = { braceletId: id, at: Date.now(), location };
-  const ref = await addDoc(passerby, r);
+  // The rules allow one report per bracelet per minute: the limit document moves to the same time
+  const ref = doc(passerby);
+  const batch = writeBatch(db);
+  batch.set(ref, r);
+  batch.set(doc(db, 'passerbyLimits', id), { at: r.at });
+  await batch.commit();
   return ref.id;
 }
 
