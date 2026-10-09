@@ -1,0 +1,26 @@
+# Hourly cleanup of old reports and locations (scripts/cleanup.mjs). Free: GitHub Actions, no Firebase Blaze needed.
+# Scheduled runs use the default branch (main). Run it by hand from the Actions tab with "Run workflow".
+name: Close old reports
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # firebase-admin only here, so the app's package.json stays as it is
+      - name: Close old reports
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then echo "FIREBASE_SERVICE_ACCOUNT secret not set, skipping"; exit 0; fi
+          mkdir -p /tmp/cleanup && cp scripts/cleanup.mjs /tmp/cleanup/
+          cd /tmp/cleanup && npm init -y > /dev/null && npm install --silent firebase-admin
+          node cleanup.mjs

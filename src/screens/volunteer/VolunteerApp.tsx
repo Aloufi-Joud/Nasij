@@ -14,7 +14,7 @@ import { Header, HeaderButton, Pill } from '../../components/Header';
 import { BottomNav } from '../../components/BottomNav';
 import type { ClosedAs, Language, PasserbyReport, Report } from '../../mock';
 import { auth } from '../../firebase';
-import { acceptReport, closeReport, getReportContact, getReportHealth, subscribeOpenReports } from '../../firebase/reports';
+import { acceptReport, closeReport, getReportHealth, getReportPhone, subscribeOpenReports } from '../../firebase/reports';
 import { areaOf, goOffDuty, goOnDuty, loadLanguages, saveLanguages, updateVolunteerLocation } from '../../firebase/volunteers';
 import { subscribePasserbyReports } from '../../firebase/passerby';
 import { addSighting } from '../../firebase/sightings';
@@ -55,8 +55,6 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
   const [locationDenied, setLocationDenied] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [languages, setLanguages] = useState<Language[]>(['ar']);
-  // Handover code of the active case, never shown. null = older report without one, undefined = not loaded yet
-  const [handoverCode, setHandoverCode] = useState<string | null | undefined>(undefined);
   const skipped = useRef(new Set<string>()); // reports this volunteer left for others: not shown again by itself
   const accepting = useRef<string | null>(null);
 
@@ -158,22 +156,19 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Family phone and handover code; tried again on each step change while it has not loaded
+  // Family phone; tried again on each step change while it has not loaded
   const activeId = active?.id;
+  const phoneLoaded = !!active?.phone;
   useEffect(() => {
-    if (!activeId || handoverCode !== undefined) return;
+    if (!activeId || phoneLoaded) return;
     let stale = false;
-    getReportContact(activeId)
-      .then(({ phone, code }) => {
-        if (stale) return;
-        setActive((a) => (a && a.id === activeId ? { ...a, phone } : a));
-        setHandoverCode(code);
-      })
+    getReportPhone(activeId)
+      .then((phone) => !stale && setActive((a) => (a && a.id === activeId ? { ...a, phone } : a)))
       .catch(() => {});
     return () => {
       stale = true;
     };
-  }, [activeId, handoverCode, step]);
+  }, [activeId, phoneLoaded, step]);
 
   // Search network: while on duty, this phone reports every open report's bracelet it hears as a sighting,
   // even for cases taken by someone else. Other bracelets are ignored. addSighting keeps it to one write
@@ -255,7 +250,6 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
         .then((health) => setActive((a) => (a && a.id === r.id ? { ...a, health } : a)))
         .catch(() => {})
         .finally(() => setHealthLoading(false));
-      setHandoverCode(undefined);
     } catch {
       setNotice({ text: tr('تعذّر قبول البلاغ، تحقق من الإنترنت وحاول مرة ثانية', 'Couldn’t accept the report, check the internet and try again'), tone: 'danger' });
     } finally {
@@ -277,7 +271,6 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
     if (!active) return;
     setClosed((old) => [{ id: active.id, name: active.member.name, type: active.type, closedAs: as, at: Date.now() }, ...old]);
     setActive(null);
-    setHandoverCode(undefined);
     setPasserby([]);
     setHealthLoading(false);
     setStep('proximity');
@@ -287,22 +280,38 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
 
   // The local copy goes at once; the close is sent to the backend (it deletes health and photo there).
   // If the family or security closed it first, the rules refuse the write, which is fine.
-  const closeCase = (as: ClosedAs) => {
+  // Handing a child to the family: the close goes first, so a wrong code (refused by the rules) keeps the case open.
+  // Any other close drops the local copy at once and sends the close in the background.
+  const closeCase = async (as: ClosedAs, code?: string): Promise<'wrong' | void> => {
     if (!active) return;
     const { id, member } = active;
-    endCase(
-      as,
-      tr(
-        `أُغلق بلاغ ${member.name}. حُذفت صلاحية السوار وبياناته الصحية من جوالك`,
-        `${member.name}’s report is closed. Bracelet access and health details were deleted from your phone`,
-      ),
-      'safe',
-    );
+    const done = () =>
+      endCase(
+        as,
+        tr(
+          `أُغلق بلاغ ${member.name}. حُذفت صلاحية السوار وبياناته الصحية من جوالك`,
+          `${member.name}’s report is closed. Bracelet access and health details were deleted from your phone`,
+        ),
+        'safe',
+      );
+    const lostConnection = () =>
+      setNotice({ text: tr(`لم يصل إغلاق بلاغ ${member.name} للنظام، أبلغ فريق الأمن`, `Closing ${member.name}’s report didn’t reach the system, tell security`), tone: 'danger' });
+    if (code) {
+      try {
+        await closeReport(id, as, code);
+        done();
+      } catch (e) {
+        if ((e as { code?: string })?.code === 'permission-denied') return 'wrong';
+        lostConnection();
+      }
+      return;
+    }
+    done();
     closeReport(id, as).catch((e: { code?: string }) => {
-      if (e?.code !== 'permission-denied' && e?.code !== 'not-found')
-        setNotice({ text: tr(`لم يصل إغلاق بلاغ ${member.name} للنظام، أبلغ فريق الأمن`, `Closing ${member.name}’s report didn’t reach the system, tell security`), tone: 'danger' });
+      if (e?.code !== 'permission-denied' && e?.code !== 'not-found') lostConnection();
     });
   };
+
 
   const title = tab === 'duty' ? tr('المناوبة', 'Duty') : tab === 'case' ? tr('البلاغ', 'Report') : tr('سجلي', 'History');
 
@@ -404,7 +413,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
               goToLabel={active.type === 'lost' ? tr('رجوع للبحث', 'Back to search') : tr('اتجه إليه', 'Go to them')}
             />
           ) : (
-            <CloseCaseScreen report={active} code={handoverCode} onConfirm={closeCase} onCancel={() => setStep('proximity')} />
+            <CloseCaseScreen report={active} onConfirm={closeCase} onCancel={() => setStep('proximity')} />
           ))}
 
         {tab === 'history' && (

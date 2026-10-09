@@ -11,7 +11,7 @@ export type ReportType = 'lost' | 'emergency' | 'fall';
 export type ReportStatus = 'open' | 'searching' | 'closed';
 // found = handed to the family, security = handed to security or ambulance,
 // helped = helped on the spot (e.g. an emergency press), nobody needed to take over
-export type ClosedAs = 'found' | 'security' | 'helped';
+export type ClosedAs = 'found' | 'security' | 'helped' | 'expired'; // expired = closed by scripts/cleanup.mjs
 export type Gender = 'male' | 'female';
 
 // Languages a member speaks and a volunteer can offer; volunteers who share it get the report first
@@ -50,6 +50,7 @@ export type Report = {
   description: string; // clothing and looks, written by the parent
   health: Health | null; // shown only to the assigned volunteer, deleted on close
   phone: string | null; // family phone, same privacy as health
+  hasCode?: boolean; // a child's report: handing over to the family needs the code (checked by the rules)
   memberId?: string; // which of the family's members, so the family app finds its open reports after a restart
   area: string; // last known area inside the event
   location: Point | null; // last known position, for the security map

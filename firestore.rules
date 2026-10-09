@@ -52,10 +52,27 @@ service cloud.firestore {
             && request.resource.data.status == 'searching'
             && request.resource.data.assignedVolunteerId == me()
             && changes(['status', 'assignedVolunteerId']))
-        // the family or the assigned volunteer closes it
+        // the family or the assigned volunteer closes it. Handing a child to the family ('found') needs the
+        // family's handover code: the volunteer sends the typed code in `handover`, and it must name a document
+        // in /handover, which the volunteer cannot read. ponytail: 6 digits can be brute-forced by script;
+        // a Cloud Function check (Blaze plan) is the better fix, see the brief section 11
         || ((isOwner() || isAssigned()) && request.resource.data.status == 'closed'
-            && changes(['status', 'closedAs', 'closedAt', 'photo']))
+            && changes(['status', 'closedAs', 'closedAt', 'photo', 'handover'])
+            // a child's report (hasCode) closes only as 'found' with the code, or 'security' (the family is told where)
+            && (isOwner() || resource.data.get('hasCode', false) != true
+                || request.resource.data.closedAs == 'security'
+                || (request.resource.data.closedAs == 'found'
+                    && exists(/databases/$(database)/documents/reports/$(id)/handover/$(request.resource.data.handover)))))
       );
+
+      // The handover code, as a document id. The family reads it (to show it after a restart); volunteers never can
+      match /handover/{code} {
+        function report() { return get(/databases/$(database)/documents/reports/$(id)).data; }
+        allow create: if signedIn() && code.size() == 6
+          && getAfter(/databases/$(database)/documents/reports/$(id)).data.familyId == me();
+        allow read: if signedIn() && report().familyId == me();
+        allow delete: if signedIn() && (report().familyId == me() || report().assignedVolunteerId == me() || isSecurity());
+      }
 
       // Health and the family phone: the family, the assigned volunteer and security only
       match /private/{doc} {
@@ -93,13 +110,26 @@ service cloud.firestore {
         && request.resource.data.at is int && nearNow(request.resource.data.at);
     }
 
-    // Passer-by: no login, can only drop a bracelet number (plus time and location)
-    // ponytail: no spam limit yet; one report per bracelet per minute is in the "later" list
+    // Passer-by: no login, can only drop a bracelet number (plus time and location).
+    // At most one per bracelet per minute: the same batch must move passerbyLimits/{bracelet} to this time.
     match /passerbyReports/{id} {
       allow create: if request.resource.data.keys().hasOnly(['braceletId', 'at', 'location'])
         && request.resource.data.braceletId is string
-        && request.resource.data.braceletId.size() == 12;
+        && request.resource.data.braceletId.size() == 12
+        && request.resource.data.at is int && nearNow(request.resource.data.at)
+        && getAfter(/databases/$(database)/documents/passerbyLimits/$(request.resource.data.braceletId)).data.at == request.resource.data.at
+        && (!exists(/databases/$(database)/documents/passerbyLimits/$(request.resource.data.braceletId))
+            || get(/databases/$(database)/documents/passerbyLimits/$(request.resource.data.braceletId)).data.at != request.resource.data.at);
       allow read: if isVolunteer() || isSecurity();
+    }
+
+    // Last passer-by report time per bracelet: written only together with a report, a minute apart
+    match /passerbyLimits/{bracelet} {
+      allow create: if bracelet.size() == 12 && request.resource.data.keys().hasOnly(['at'])
+        && request.resource.data.at is int && nearNow(request.resource.data.at);
+      allow update: if request.resource.data.keys().hasOnly(['at'])
+        && request.resource.data.at is int && nearNow(request.resource.data.at)
+        && request.resource.data.at >= resource.data.at + 60000;
     }
 
     match /zones/{id} {

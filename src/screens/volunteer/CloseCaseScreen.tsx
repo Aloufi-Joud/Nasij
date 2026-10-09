@@ -1,6 +1,7 @@
 // Close case: handed to the family, helped on the spot (emergency press or fall only), or handed to security.
 // Closing deletes this volunteer's access to the bracelet and the medical data.
-// Handing over to the family needs the code from the family's app, so a stranger cannot claim the child.
+// Handing a child to the family needs the code from the family's app, so a stranger cannot claim the child.
+// This screen never knows the right code: the typed code goes with the close, and the rules check it.
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Text, TextInput } from '../../components/Text';
@@ -13,18 +14,28 @@ import { CLOSED_UI, whoLine } from './labels';
 import { latinDigits } from '../../components/digits';
 import { tr } from '../../i18n';
 
-// code: handover code of the report; null on older reports (no check then);
-// undefined while it could not be loaded, which blocks "handed to the family" (fails closed)
-type Props = { report: Report; code: string | null | undefined; onConfirm: (as: ClosedAs) => void; onCancel: () => void };
+// onConfirm resolves to 'wrong' when the rules refused the typed code
+type Props = {
+  report: Report;
+  onConfirm: (as: ClosedAs, code?: string) => Promise<'wrong' | void>;
+  onCancel: () => void;
+};
 
-export default function CloseCaseScreen({ report: r, code, onConfirm, onCancel }: Props) {
+export default function CloseCaseScreen({ report: r, onConfirm, onCancel }: Props) {
   const [choice, setChoice] = useState<ClosedAs | null>(null);
   const [typed, setTyped] = useState('');
-  const needsCode = choice === 'found' && code !== null;
-  const wrong = needsCode && typed.length === 4 && typed !== code;
-  const ready = !!choice && (!needsCode || (!!code && typed === code));
+  const [wrong, setWrong] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const needsCode = choice === 'found' && !!r.hasCode;
+  const ready = !!choice && (!needsCode || typed.length === 6) && !busy;
+  const confirm = async () => {
+    if (!ready) return;
+    setBusy(true);
+    const result = await onConfirm(choice, needsCode ? typed : undefined).finally(() => setBusy(false));
+    if (result === 'wrong') setWrong(true);
+  };
   const lost = r.type === 'lost';
-  const sub: Record<ClosedAs, string> = {
+  const sub: Partial<Record<ClosedAs, string>> = {
     found: lost ? tr('تواصلت مع أهله وصار معهم', 'I reached the family, they’re together') : tr('وصل أهله وصار معهم', 'The family arrived, they’re together'),
     helped: tr('ساعدته وهو بخير، وما احتاج أحد يستلمه', 'I helped, they’re fine, no handover needed'),
     security: lost
@@ -70,15 +81,7 @@ export default function CloseCaseScreen({ report: r, code, onConfirm, onCancel }
         })}
       </View>
 
-      {needsCode && code === undefined && (
-        <Text style={s.codeWrong}>
-          {tr(
-            'ما قدرنا نجيب رمز التسليم، تأكد من الإنترنت وارجع لهالشاشة. إذا ما ضبط، سلّمه لنقطة الأمن',
-            'Couldn’t load the handover code. Check the internet and come back to this screen. If it still fails, hand them to a security point',
-          )}
-        </Text>
-      )}
-      {needsCode && !!code && (
+      {needsCode && (
         <View style={[ui.card, { marginTop: 14 }]}>
           <Text style={s.codeTitle}>{tr('رمز التسليم', 'Handover code')}</Text>
           <Text style={ui.muted}>
@@ -90,8 +93,11 @@ export default function CloseCaseScreen({ report: r, code, onConfirm, onCancel }
           <TextInput
             style={[s.codeInput, wrong && { borderColor: C.danger }]}
             value={typed}
-            onChangeText={(t) => setTyped(latinDigits(t).slice(0, 4))}
-            placeholder={tr('٤ أرقام', '4 digits')}
+            onChangeText={(t) => {
+              setTyped(latinDigits(t).slice(0, 6));
+              setWrong(false);
+            }}
+            placeholder={tr('٦ أرقام', '6 digits')}
             placeholderTextColor={C.faint}
             keyboardType="number-pad"
             textAlign="center"
@@ -105,8 +111,8 @@ export default function CloseCaseScreen({ report: r, code, onConfirm, onCancel }
         <Text style={s.privacyText}>{tr('عند الإغلاق تُحذف صلاحيتك على السوار، وتُحذف بياناته الصحية وصورته من جوالك', 'On closing, your access to the bracelet ends and their health details and photo are deleted from your phone')}</Text>
       </View>
 
-      <Pressable style={[ui.btn, { marginTop: 18 }, !ready && { opacity: 0.4 }]} disabled={!ready} onPress={() => ready && onConfirm(choice)}>
-        <Text style={ui.btnText}>{tr('تأكيد وإغلاق البلاغ', 'Confirm and close')}</Text>
+      <Pressable style={[ui.btn, { marginTop: 18 }, !ready && { opacity: 0.4 }]} disabled={!ready} onPress={confirm}>
+        <Text style={ui.btnText}>{busy ? tr('جارٍ التحقق…', 'Checking…') : tr('تأكيد وإغلاق البلاغ', 'Confirm and close')}</Text>
       </Pressable>
       <Pressable style={s.cancel} onPress={onCancel} hitSlop={6}>
         <Text style={s.cancelText}>{tr('رجوع، البلاغ ما زال مفتوحًا', 'Back, the report stays open')}</Text>
