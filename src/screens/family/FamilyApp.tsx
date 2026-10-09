@@ -1309,7 +1309,8 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
 
         {btOff && <Banner tone="danger" icon="bluetooth" text={tr('شغّلي البلوتوث عشان نتابع الأساور', 'Turn on Bluetooth so we can track the bracelets')} />}
 
-        <FadeIn key={screen?.kind ?? (formOpen ? 'form' : tab)}>
+        {/* Screens and the form fade in; tab switches don't animate (seen dozens of times a session) */}
+        <FadeIn key={screen?.kind ?? (formOpen ? 'form' : 'tabs')}>
         {screen?.kind === 'lost' && screenMember && (
           <LostScreen
             name={screenMember.name}
@@ -1421,7 +1422,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
               <Banner tone="warn" icon="call-outline" text={tr('أضف رقم جوالك عشان يتواصل معك المتطوع', 'Add your phone so a volunteer can reach you')} />
             )}
 
-            <FadeIn delay={40} style={s.stats}>
+            <View style={s.stats}>
               {[
                 { n: members.length, label: tr('أفراد', 'Members'), color: C.primary },
                 { n: activeCount, label: tr('أساور نشطة', 'Active bracelets'), color: C.safe },
@@ -1432,9 +1433,9 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
                   <Text style={s.statLabel} numberOfLines={1}>{x.label}</Text>
                 </View>
               ))}
-            </FadeIn>
+            </View>
 
-            <FadeIn delay={80}>
+            <>
               <Text style={ui.caption}>{tr('بياناتي', 'My details')}</Text>
               <View style={ui.card}>
                 <Text style={[s.label, { marginTop: 0 }]}>{tr('اسمك', 'Your name')}</Text>
@@ -1590,9 +1591,9 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
                   )}
                 </View>
               </View>
-            </FadeIn>
+            </>
 
-            <FadeIn delay={120}>
+            <>
               <Text style={ui.caption}>{tr('الإعدادات', 'Settings')}</Text>
               <View style={[ui.card, { paddingVertical: 4 }]}>
                 {settingRow('language-outline', tr('لغة التطبيق', 'App language'), toggleLang, { value: tr('العربية', 'English') })}
@@ -1604,7 +1605,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
                   <Text style={[s.setLabel, { color: C.danger }]}>{tr('إنهاء الزيارة', 'End visit')}</Text>
                 </Pressable>
               </View>
-            </FadeIn>
+            </>
           </>
         )}
 

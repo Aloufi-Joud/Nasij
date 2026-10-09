@@ -6,7 +6,7 @@ import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { Text, TextInput } from '../components/Text';
-import { Pressable } from '../components/Motion';
+import { FadeIn, Pressable } from '../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
 import { C, F, shadow, ui } from '../theme';
 import { Button } from '../components/Button';
@@ -71,11 +71,16 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
       <View style={s.top}>
         <LangButton dark />
       </View>
-      <View style={s.logo}>
+      {/* Seen once per visit, so it can afford a short staggered entrance */}
+      <FadeIn pop style={s.logo}>
         <Ionicons name="shield-checkmark" size={38} color="#fff" />
-      </View>
-      <Text style={s.name}>{tr('نسيج', 'Nasij')}</Text>
-      <Text style={s.tagline}>{tr('ما أحد يضيع في الزحام', 'No one gets lost in the crowd')}</Text>
+      </FadeIn>
+      <FadeIn delay={60}>
+        <Text style={s.name}>{tr('نسيج', 'Nasij')}</Text>
+        <Text style={s.tagline}>{tr('ما أحد يضيع في الزحام', 'No one gets lost in the crowd')}</Text>
+      </FadeIn>
+
+      <FadeIn delay={120}>
 
       <Text style={ui.caption}>{tr('البريد الإلكتروني', 'Email')}</Text>
       <TextInput
@@ -128,6 +133,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
       {!!error && <Text style={s.error}>{error}</Text>}
       {!!info && <Text style={s.info}>{info}</Text>}
       <Button label={busy ? tr('جارٍ الدخول…', 'Signing in…') : tr('دخول', 'Sign in')} onPress={login} disabled={!ready} style={{ marginTop: 22 }} />
+      </FadeIn>
     </ScrollView>
   );
 }
