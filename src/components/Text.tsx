@@ -10,8 +10,9 @@ export function Text(p: TextProps) {
   return <RNText {...p} style={[font, p.style]} />;
 }
 
-// An input set to 'left' holds Latin text (email) in both languages: pre-swap it so it stays left in English
+// React Native does not swap textAlign on a TextInput under the root 'rtl', so inputs flip here:
+// 'right' (the default for Arabic-first screens) becomes 'left' in English. 'left' holds Latin text (email) and stays left.
 export function TextInput(p: TextInputProps) {
-  const left = isEn() && p.textAlign === 'left';
-  return <RNTextInput {...p} textAlign={left ? 'right' : p.textAlign} style={[font, p.style]} />;
+  const flip = isEn() && p.textAlign === 'right';
+  return <RNTextInput {...p} textAlign={flip ? 'left' : p.textAlign} style={[font, p.style]} />;
 }

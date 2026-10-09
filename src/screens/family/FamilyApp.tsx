@@ -17,19 +17,19 @@ import { LOST_AFTER_MS, WINDOW, braceletMac, cleanMac, parseAlarm, summarize, ty
 import { Banner } from '../../components/Banner';
 import { BottomNav } from '../../components/BottomNav';
 import { Button } from '../../components/Button';
-import { Header, HeaderButton, Pill } from '../../components/Header';
+import { Header, HeaderButton, Pill, type IconName } from '../../components/Header';
 import { latinDigits } from '../../components/digits';
 import { LanguagePicker } from '../../components/LanguagePicker';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { claimBracelet, releaseBracelet } from '../../firebase/bracelets';
 import { deleteMember, loadMembers, saveMember } from '../../firebase/members';
-import { loadProfile, saveProfile, type Profile } from '../../firebase/profile';
+import { changeEmail, changePassword, confirmPassword, loadProfile, saveProfile, type Profile } from '../../firebase/profile';
 import { closeReport, createReport, getHandoverCode, loadMyOpenReports, subscribeReport } from '../../firebase/reports';
 import { subscribeLastSeen, type LastSeen } from '../../firebase/sightings';
 import FoundScreen from './FoundScreen';
 import LostScreen from './LostScreen';
-import { isEn, langName, tr } from '../../i18n';
+import { isEn, langName, toggleLang, tr } from '../../i18n';
 
 const NEAR = -65;           // stronger than this = near
 const FAR = -80;            // weaker than this = far
@@ -193,6 +193,16 @@ const CIRCLE_FILL: Record<Zone, string> = {
 type Tab = 'home' | 'map' | 'alerts' | 'profile';
 type Screen = { kind: 'lost' | 'found'; memberId: string } | null;
 
+// Firebase Auth errors as the guardian should read them
+const authError = (e: any) =>
+  e.code === 'auth/invalid-credential' || e.code === 'auth/wrong-password' ? tr('كلمة المرور غير صحيحة', 'Wrong password')
+  : e.code === 'auth/email-already-in-use' ? tr('هذا الإيميل مستخدم في حساب ثاني', 'That email is used by another account')
+  : e.code === 'auth/invalid-email' ? tr('اكتب إيميل صحيح', 'Enter a valid email')
+  : e.code === 'auth/requires-recent-login' ? tr('ادخل كلمة المرور القديمة من جديد', 'Enter your old password again')
+  : e.code === 'auth/too-many-requests' ? tr('محاولات كثيرة، حاول بعد قليل', 'Too many attempts, try again shortly')
+  : e.code === 'auth/network-request-failed' ? tr('لا يوجد اتصال بالإنترنت', 'No internet connection')
+  : tr('تعذر التغيير، حاول مرة أخرى', 'Couldn’t change it, try again');
+
 export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: () => void; onLogout: () => void }) {
   const [bt, setBt] = useState<string>('');
   const [log, setLog] = useState<{ time: string; kind: LogKind; who: string }[]>([]);
@@ -210,6 +220,14 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   const [profile, setProfile] = useState<Profile>({ name: '', phone: '' });
   const [profileDraft, setProfileDraft] = useState<Profile>({ name: '', phone: '' });
   const [profileSaved, setProfileSaved] = useState(false);
+  // Changing the sign-in email: the new email, the current password, and the result line
+  const [login, setLogin] = useState(() => ({ current: '', email: auth.currentUser?.email ?? '' }));
+  const [loginMsg, setLoginMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [loginBusy, setLoginBusy] = useState(false);
+  // Changing the password: form open, old password, and the new one twice
+  const [pw, setPw] = useState({ open: false, old: '', next: '', again: '' });
+  const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [pwBusy, setPwBusy] = useState(false);
   // Open reports per member id, kept live from Firestore
   const [reports, setReports] = useState<Record<string, Report>>({});
   // Handover code per member id: the volunteer asks for it before handing them over
@@ -411,6 +429,60 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     : !/^\d{9,15}$/.test(profileDraft.phone)
       ? tr('اكتب رقم جوال صحيح', 'Enter a valid phone number')
       : null;
+  const profileDirty = profileDraft.name.trim() !== profile.name || profileDraft.phone !== profile.phone;
+  const newEmail = login.email.trim().toLowerCase();
+  const loginDirty = newEmail !== (auth.currentUser?.email ?? '').toLowerCase();
+  const loginError = !loginDirty
+    ? null
+    : !/^\S+@\S+\.\S+$/.test(newEmail)
+      ? tr('اكتب إيميل صحيح', 'Enter a valid email')
+      : !login.current
+        ? tr('اكتب كلمة المرور الحالية', 'Enter your current password')
+        : null;
+  const saveLogin = async () => {
+    if (loginError) return;
+    setLoginBusy(true);
+    setLoginMsg(null);
+    try {
+      await changeEmail(login.current, newEmail);
+      setLogin({ current: '', email: auth.currentUser?.email ?? '' });
+      setLoginMsg({ ok: true, text: tr(`أرسلنا رابط تأكيد إلى ${newEmail}، يتغير الإيميل بعد ما تفتحه`, `We sent a confirmation link to ${newEmail}. The email changes once you open it`) });
+    } catch (e: any) {
+      setLoginMsg({ ok: false, text: authError(e) });
+    } finally {
+      setLoginBusy(false);
+    }
+  };
+  const saveDetails = () => {
+    if (profileDirty) saveMyProfile();
+    if (loginDirty) saveLogin();
+  };
+  const detailsBlocked = loginBusy || (!profileDirty && !loginDirty) || (profileDirty && !!profileError) || (loginDirty && !!loginError);
+
+  const pwError = pw.next.length < 6
+    ? tr('كلمة المرور ٦ أحرف أو أكثر', 'Password needs 6 characters or more')
+    : pw.next !== pw.again
+      ? tr('كلمتا المرور غير متطابقتين', 'Passwords don’t match')
+      : null;
+  const saveNewPassword = async () => {
+    if (pwError || !pw.old) return;
+    setPwBusy(true);
+    setPwMsg(null);
+    try {
+      await confirmPassword(pw.old);
+      await changePassword(pw.next);
+      setPw({ open: false, old: '', next: '', again: '' });
+      setPwMsg({ ok: true, text: tr('تغيّرت كلمة المرور', 'Password changed') });
+    } catch (e: any) {
+      setPwMsg({ ok: false, text: authError(e) });
+    } finally {
+      setPwBusy(false);
+    }
+  };
+  const closePw = () => {
+    setPw({ open: false, old: '', next: '', again: '' });
+    setPwMsg(null);
+  };
   const saveMyProfile = () => {
     if (profileError) return;
     const p = { name: profileDraft.name.trim(), phone: profileDraft.phone };
@@ -1057,6 +1129,18 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     );
   };
 
+  // One row of the account settings list
+  const settingRow = (icon: IconName, label: string, onPress: () => void, o: { value?: string; divider?: boolean } = {}) => (
+    <Pressable style={[s.setRow, o.divider && s.setDivider]} onPress={onPress}>
+      <View style={s.setIcon}>
+        <Ionicons name={icon} size={18} color={C.primary} />
+      </View>
+      <Text style={s.setLabel}>{label}</Text>
+      {!!o.value && <Text style={s.setValue}>{o.value}</Text>}
+      <Ionicons name={isEn() ? 'chevron-forward' : 'chevron-back'} size={16} color={C.faint} />
+    </Pressable>
+  );
+
   return (
     <View style={s.screen}>
       <Header
@@ -1226,43 +1310,205 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
 
         {!screen && tab === 'profile' && (
           <>
-            <Text style={ui.sectionTitle}>{tr('حسابي', 'My account')}</Text>
-            <View style={ui.card}>
-              <Text style={s.label}>{tr('البريد الإلكتروني', 'Email')}</Text>
-              <Text style={s.readOnly}>{auth.currentUser?.email ?? ''}</Text>
-
-              <Text style={s.label}>{tr('اسمك', 'Your name')}</Text>
-              <TextInput
-                style={s.input}
-                value={profileDraft.name}
-                onChangeText={(name) => {
-                  setProfileDraft({ ...profileDraft, name });
-                  setProfileSaved(false);
-                }}
-                placeholder={tr('مثلًا: أبو سنا', 'e.g. Sana’s dad')}
-                placeholderTextColor={C.faint}
-                textAlign="right"
-              />
-
-              <Text style={s.label}>{tr('رقم جوالك', 'Your phone')}</Text>
-              <TextInput
-                style={s.input}
-                value={profileDraft.phone}
-                onChangeText={(phone) => {
-                  setProfileDraft({ ...profileDraft, phone: latinDigits(phone).slice(0, 15) });
-                  setProfileSaved(false);
-                }}
-                placeholder="05XXXXXXXX"
-                placeholderTextColor={C.faint}
-                keyboardType="phone-pad"
-                textAlign="right"
-              />
-              <Text style={[s.hint, { marginTop: 6 }]}>{tr('يتعبّى تلقائيًا للأفراد الجدد، ويوصل للمتطوع المستلم إذا ما للفرد رقم', 'Filled in for new members, and sent to the volunteer if a member has no number')}</Text>
-
-              {!!profileError && !!profileDraft.name.trim() && <Text style={s.formError}>{profileError}</Text>}
-              {profileSaved && <Text style={s.saved}>{tr('انحفظت بياناتك', 'Your details are saved')}</Text>}
-              <Button label={tr('حفظ', 'Save')} onPress={saveMyProfile} disabled={!!profileError} style={{ marginTop: 12 }} />
+            {/* Who is signed in */}
+            <View style={[ui.card, s.meCard]}>
+              <View style={s.meAvatar}>
+                <Text style={s.meAvatarText}>{profile.name.trim().charAt(0) || '؟'}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.memberName} numberOfLines={1}>{profile.name || tr('ولي الأمر', 'Guardian')}</Text>
+                <Text style={s.memberRole} numberOfLines={1}>{auth.currentUser?.email ?? ''}</Text>
+              </View>
             </View>
+
+            {!profile.phone && (
+              <Banner tone="warn" icon="call-outline" text={tr('أضف رقم جوالك عشان يتواصل معك المتطوع', 'Add your phone so a volunteer can reach you')} />
+            )}
+
+            <FadeIn delay={40} style={s.stats}>
+              {[
+                { n: members.length, label: tr('أفراد', 'Members'), color: C.primary },
+                { n: activeCount, label: tr('أساور نشطة', 'Active bracelets'), color: C.safe },
+                { n: openCount, label: tr('بلاغات مفتوحة', 'Open reports'), color: openCount ? C.danger : C.faint },
+              ].map((x) => (
+                <View key={x.label} style={s.stat}>
+                  <Text style={[s.statNum, { color: x.color }]}>{x.n}</Text>
+                  <Text style={s.statLabel} numberOfLines={1}>{x.label}</Text>
+                </View>
+              ))}
+            </FadeIn>
+
+            <FadeIn delay={80}>
+              <Text style={ui.caption}>{tr('بياناتي', 'My details')}</Text>
+              <View style={ui.card}>
+                <Text style={[s.label, { marginTop: 0 }]}>{tr('اسمك', 'Your name')}</Text>
+                <TextInput
+                  style={s.input}
+                  value={profileDraft.name}
+                  onChangeText={(name) => {
+                    setProfileDraft({ ...profileDraft, name });
+                    setProfileSaved(false);
+                  }}
+                  placeholder={tr('مثلًا: أبو سنا', 'e.g. Sana’s dad')}
+                  placeholderTextColor={C.faint}
+                  textAlign="right"
+                />
+
+                <Text style={s.label}>{tr('رقم جوالك', 'Your phone')}</Text>
+                <TextInput
+                  style={s.input}
+                  value={profileDraft.phone}
+                  onChangeText={(phone) => {
+                    setProfileDraft({ ...profileDraft, phone: latinDigits(phone).slice(0, 15) });
+                    setProfileSaved(false);
+                  }}
+                  placeholder="05XXXXXXXX"
+                  placeholderTextColor={C.faint}
+                  keyboardType="phone-pad"
+                  textAlign="right"
+                />
+
+                <Text style={s.label}>{tr('الإيميل', 'Email')}</Text>
+                <TextInput
+                  style={s.input}
+                  value={login.email}
+                  onChangeText={(email) => {
+                    setLogin({ ...login, email });
+                    setLoginMsg(null);
+                  }}
+                  placeholder="name@example.com"
+                  placeholderTextColor={C.faint}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="email"
+                  textAlign="right"
+                />
+
+                {/* Firebase asks for the current password before the email can change */}
+                {loginDirty && (
+                  <>
+                    <Text style={s.label}>{tr('كلمة المرور الحالية', 'Current password')}</Text>
+                    <TextInput
+                      style={s.input}
+                      value={login.current}
+                      onChangeText={(current) => {
+                        setLogin({ ...login, current });
+                        setLoginMsg(null);
+                      }}
+                      secureTextEntry
+                      autoCapitalize="none"
+                      autoComplete="current-password"
+                      textAlign="right"
+                    />
+                  </>
+                )}
+
+                {!!profileError && !!profileDraft.name.trim() && <Text style={s.formError}>{profileError}</Text>}
+                {!!loginError && !!newEmail && <Text style={s.hint}>{loginError}</Text>}
+                {loginMsg && !loginMsg.ok && <Text style={s.formError}>{loginMsg.text}</Text>}
+                {!profileDirty && !loginDirty && (profileSaved || !!loginMsg?.ok) ? (
+                  <View style={s.savedRow}>
+                    <Ionicons name="checkmark-circle" size={18} color={C.safe} />
+                    <Text style={[s.saved, { marginTop: 0, flexShrink: 1 }]}>{loginMsg?.ok ? loginMsg.text : tr('انحفظت بياناتك', 'Your details are saved')}</Text>
+                  </View>
+                ) : (
+                  <Button label={loginBusy ? tr('جارٍ الحفظ…', 'Saving…') : tr('حفظ', 'Save')} onPress={saveDetails} disabled={detailsBlocked} style={{ marginTop: 14 }} />
+                )}
+
+                {/* Password: its own button, old password first, then the new one twice */}
+                <View style={s.pwBox}>
+                  {!pw.open ? (
+                    <>
+                      {pwMsg?.ok && (
+                        <View style={[s.savedRow, { marginTop: 0, marginBottom: 10 }]}>
+                          <Ionicons name="checkmark-circle" size={18} color={C.safe} />
+                          <Text style={[s.saved, { marginTop: 0 }]}>{pwMsg.text}</Text>
+                        </View>
+                      )}
+                      <Button
+                        label={tr('تغيير كلمة المرور', 'Change password')}
+                        icon="key-outline"
+                        kind="ghost"
+                        onPress={() => {
+                          setPw({ ...pw, open: true });
+                          setPwMsg(null);
+                        }}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <>
+                          <Text style={[s.label, { marginTop: 0 }]}>{tr('كلمة المرور القديمة', 'Old password')}</Text>
+                          <TextInput
+                            style={s.input}
+                            value={pw.old}
+                            onChangeText={(old) => {
+                              setPw({ ...pw, old });
+                              setPwMsg(null);
+                            }}
+                            secureTextEntry
+                            autoCapitalize="none"
+                            autoComplete="current-password"
+                            textAlign="right"
+                          />
+                          <Text style={s.label}>{tr('كلمة المرور الجديدة', 'New password')}</Text>
+                          <TextInput
+                            style={s.input}
+                            value={pw.next}
+                            onChangeText={(next) => {
+                              setPw({ ...pw, next });
+                              setPwMsg(null);
+                            }}
+                            secureTextEntry
+                            autoCapitalize="none"
+                            autoComplete="new-password"
+                            textAlign="right"
+                          />
+                          <Text style={s.label}>{tr('أكّد كلمة المرور الجديدة', 'Confirm new password')}</Text>
+                          <TextInput
+                            style={s.input}
+                            value={pw.again}
+                            onChangeText={(again) => {
+                              setPw({ ...pw, again });
+                              setPwMsg(null);
+                            }}
+                            secureTextEntry
+                            autoCapitalize="none"
+                            autoComplete="new-password"
+                            textAlign="right"
+                          />
+                          {!!pwError && !!pw.again && <Text style={s.hint}>{pwError}</Text>}
+                      </>
+                      {pwMsg && !pwMsg.ok && <Text style={s.formError}>{pwMsg.text}</Text>}
+                      <View style={s.pwActions}>
+                        <Button
+                          label={pwBusy ? tr('لحظة…', 'One moment…') : tr('غيّر كلمة المرور', 'Change password')}
+                          onPress={saveNewPassword}
+                          disabled={pwBusy || !pw.old || !!pwError}
+                          style={{ flex: 1 }}
+                        />
+                        <Button label={tr('إلغاء', 'Cancel')} kind="ghost" onPress={closePw} style={{ flex: 1 }} />
+                      </View>
+                    </>
+                  )}
+                </View>
+              </View>
+            </FadeIn>
+
+            <FadeIn delay={120}>
+              <Text style={ui.caption}>{tr('الإعدادات', 'Settings')}</Text>
+              <View style={[ui.card, { paddingVertical: 4 }]}>
+                {settingRow('language-outline', tr('لغة التطبيق', 'App language'), toggleLang, { value: tr('العربية', 'English') })}
+                {settingRow('swap-horizontal', tr('التبديل إلى متطوع', 'Switch to volunteer'), onSwitchRole, { divider: true })}
+                <Pressable style={[s.setRow, s.setDivider]} onPress={endVisit}>
+                  <View style={[s.setIcon, { backgroundColor: C.dangerBg }]}>
+                    <Ionicons name="exit-outline" size={18} color={C.danger} />
+                  </View>
+                  <Text style={[s.setLabel, { color: C.danger }]}>{tr('إنهاء الزيارة', 'End visit')}</Text>
+                </Pressable>
+              </View>
+            </FadeIn>
           </>
         )}
 
@@ -1359,6 +1605,21 @@ const s = StyleSheet.create({
   readOnly: { color: C.text, fontSize: 15, textAlign: 'right' },
   saved: { color: C.safe, fontSize: 13, fontWeight: '600', textAlign: 'right', marginTop: 12 },
   formError: { color: C.danger, fontSize: 13, fontWeight: '600', textAlign: 'right', marginTop: 12 },
+  meCard: { flexDirection: 'row-reverse', alignItems: 'center', gap: 14, marginBottom: 14 },
+  meAvatar: { width: 60, height: 60, borderRadius: 20, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' },
+  meAvatarText: { color: '#fff', fontSize: 26, fontWeight: '800' },
+  stats: { flexDirection: 'row-reverse', gap: 10 },
+  stat: { ...ui.tile, flex: 1, alignItems: 'center', paddingVertical: 12 },
+  statNum: { fontSize: 24, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  statLabel: { color: C.muted, fontSize: 12, fontWeight: '600', marginTop: 2 },
+  savedRow: { flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 14, paddingVertical: 14, borderRadius: 16, backgroundColor: C.safeBg },
+  setRow: { flexDirection: 'row-reverse', alignItems: 'center', gap: 12, paddingVertical: 13 },
+  setDivider: { borderTopWidth: 1, borderTopColor: C.border },
+  setIcon: { width: 36, height: 36, borderRadius: 12, backgroundColor: C.techBg, alignItems: 'center', justifyContent: 'center' },
+  setLabel: { flex: 1, color: C.text, fontSize: 15, fontWeight: '600', textAlign: 'right' },
+  pwBox: { marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: C.border },
+  pwActions: { flexDirection: 'row-reverse', gap: 10, marginTop: 14 },
+  setValue: { color: C.muted, fontSize: 13.5 },
   techText: { color: C.primary, fontSize: 12, textAlign: 'right', marginBottom: 2 },
 
   sos: {

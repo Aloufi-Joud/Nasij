@@ -281,6 +281,8 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 - A volunteer can close a child's report only as "found" (with the code) or "handed to security"; the family app then says which, and for security tells them to go to the security point with ID
 - Passer-by reports are limited to one per bracelet per minute (`passerbyLimits/{bracelet}`, written in the same batch)
 - `ClosedAs` adds `expired`: closed by the hourly cleanup, not by a person
+- Family "My account" tab redesigned: identity card, member/bracelet/report counts, "My details" (name, phone, email) with one save, a "change password" button (old, new, confirm), and settings (language, switch to volunteer, end visit). New in `src/firebase/profile.ts`: `changeEmail` (sends a confirmation link; the email changes once it is opened), `confirmPassword`, `changePassword`. **Person 3:** build the same page for the volunteer app (task 7 in your list)
+- `TextInput` from `src/components/Text.tsx` now flips `textAlign="right"` to left in English (React Native does not flip inputs by itself). `textAlign="left"` stays left in both languages, for Latin-only fields
 - **One-time setup for the hourly cleanup** (`scripts/cleanup.mjs`, `.github/workflows/cleanup.yml`): Firebase console → Project settings → Service accounts → Generate new private key. Then GitHub → the repo → Settings → Secrets and variables → Actions → New repository secret, name `FIREBASE_SERVICE_ACCOUNT`, value = the whole JSON file. Never commit that file. The schedule runs from `main`, so it starts after the PR is merged; "Run workflow" in the Actions tab runs it by hand
 
 **Person 1: Bluetooth, bracelet and family app, final integration**
@@ -324,6 +326,7 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 4. [x] Update the volunteer's on-duty status and location in their `volunteers` document
 5. [x] Remove the volunteer's own direction calculation; use Person 1's readings from `src/ble/`
 6. [ ] Test the whole volunteer flow with the real bracelet
+7. [ ] (added 2026-10-09) "My account" page in the volunteer app, the same as the family one: name and phone, email change, and a "change password" button. Reuse `changeEmail`, `confirmPassword`, `changePassword` from `src/firebase/profile.ts` and copy the layout from the `profile` tab in `FamilyApp.tsx`
 
 **Order:**
 
