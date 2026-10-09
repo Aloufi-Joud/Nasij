@@ -1,7 +1,7 @@
 // Nasij family app: several members, one bracelet each. Measures each signal and alerts when one moves away.
 // Same logic as the tested laptop scanner (nasij_scanner.py)
 import { useEffect, useRef, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Vibration, View } from 'react-native';
+import { Alert, Modal, ScrollView, StyleSheet, Vibration, View } from 'react-native';
 import { Text, TextInput } from '../../components/Text';
 import { FadeIn, Pressable } from '../../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,7 +9,7 @@ import { State, type Device } from 'react-native-ble-plx';
 import MapView, { Circle, Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { C, ui } from '../../theme';
-import { MAX_AGE, type Gender, type Kind, type Language, type Member, type Point, type Report, type ReportType } from '../../mock';
+import { MAX_AGE, zones, type Gender, type Kind, type Language, type Member, type Point, type Report, type ReportType } from '../../mock';
 import { metresBetween } from '../../components/geo';
 import { PAIR_RSSI, newPairing, pairStep, type Pairing } from '../../ble/pairing';
 import { listen, onBluetoothState } from '../../ble/scanner';
@@ -18,7 +18,7 @@ import { Banner } from '../../components/Banner';
 import { BottomNav } from '../../components/BottomNav';
 import { Button } from '../../components/Button';
 import { Header, HeaderButton, Pill, type IconName } from '../../components/Header';
-import { latinDigits } from '../../components/digits';
+import { latinDigits, minSec } from '../../components/digits';
 import { LanguagePicker } from '../../components/LanguagePicker';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../firebase';
@@ -27,6 +27,7 @@ import { deleteMember, loadMembers, saveMember } from '../../firebase/members';
 import { changeEmail, changePassword, confirmPassword, loadProfile, saveProfile, type Profile } from '../../firebase/profile';
 import { closeReport, createReport, getHandoverCode, loadMyOpenReports, subscribeReport } from '../../firebase/reports';
 import { subscribeLastSeen, type LastSeen } from '../../firebase/sightings';
+import { areaOf } from '../../firebase/volunteers';
 import FoundScreen from './FoundScreen';
 import LostScreen from './LostScreen';
 import { isEn, langName, toggleLang, tr } from '../../i18n';
@@ -235,7 +236,8 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   // Where a volunteer's phone last heard the bracelet of an open report, per member id
   const [seen, setSeen] = useState<Record<string, LastSeen | null>>({});
   const [screen, setScreen] = useState<Screen>(null);
-  const [justFound, setJustFound] = useState<{ name: string; as: Report['closedAs'] } | null>(null);
+  const [lostAsk, setLostAsk] = useState<string | null>(null); // child whose signal was just lost: ask to report
+  const [justFound, setJustFound] = useState<{ name: string; as: Report['closedAs']; took: number } | null>(null);
   const [linkFor, setLinkFor] = useState<string | null>(null); // member whose link panel is open
   const [typedMac, setTypedMac] = useState('');
   const [live, setLive] = useState<Record<string, Live>>({});
@@ -387,6 +389,8 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
             tr.zone = confirmed;
             addLog(confirmed, who);
             if (confirmed === 'FAR' || confirmed === 'LOST') Vibration.vibrate([0, 500, 200, 500]);
+            const child = membersRef.current.find((m) => m.mac === mac && m.kind === 'child');
+            if (confirmed === 'LOST' && child) setLostAsk(child.id);
           }
 
           // Where the bracelet can be: within `radius` of the family. Warn once when that circle reaches the event edge.
@@ -599,7 +603,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         setReports(({ [memberId]: _, ...rest }) => rest);
         setScreen((s) => (s?.memberId === memberId ? null : s));
         if (!r || r.closedAs === 'expired') return; // closed by the hourly cleanup, not because they were found
-        setJustFound({ name: r.member.name, as: r.closedAs });
+        setJustFound({ name: r.member.name, as: r.closedAs, took: (r.closedAt ?? Date.now()) - r.createdAt });
         addLog('FOUND', r.member.name);
       });
     });
@@ -614,6 +618,10 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   const sendReport = async (m: FamMember, type: ReportType, description: string, photo: string | null) => {
     // Handover code for children only: an elder can say who their family is
     const code = m.kind === 'child' ? String(100000 + Math.floor(Math.random() * 900000)) : undefined;
+    // ponytail: away from the Expo site (every demo), the report goes to a random zone so volunteers see a real
+    // place. Remove at the real event, where the family's own zone is used
+    const here = areaOf(me);
+    const z = here ? null : zones[Math.floor(Math.random() * zones.length)];
     const r = {
       type,
       braceletId: m.mac ?? '',
@@ -623,8 +631,9 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
       description,
       health: m.condition ? { condition: m.condition, notes: m.notes } : null,
       phone: m.phone || profile.phone || null,
-      area: 'قرب موقع العائلة',
-      location: me,
+      // The zone on the event map, so a volunteer knows where to look (the family's own spot means nothing to them)
+      area: z ? z.name : here,
+      location: z ? offset(z.center, Math.random() * z.radius * 0.6, Math.random() * 360) : me,
     };
     try {
       const id = await createReport({ ...r, code });
@@ -739,6 +748,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   });
   const openCount = Object.keys(reports).length;
   const screenMember = screen && members.find((m) => m.id === screen.memberId);
+  const askMember = members.find((m) => m.id === lostAsk && !reports[m.id] && liveOf(m)?.zone === 'LOST');
   const draftError = formError(draft);
 
   const renderMap = (height: number) => (
@@ -1055,7 +1065,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
               text={
                 report.status === 'searching'
                   ? tr('متطوع استلم البلاغ ويدور الحين', 'A volunteer took the report and is searching now')
-                  : tr('البلاغ وصل للمتطوعين القريبين، ننتظر أحد يستلمه', 'Report sent to nearby volunteers, waiting for someone to take it')
+                  : tr('البلاغ وصل للمتطوعين القريبين، ننتظر أحد يلقاه', 'Report sent to nearby volunteers, waiting for someone to find them')
               }
             />
             {seen[m.id] && (() => {
@@ -1168,6 +1178,30 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         {(warnAny || !!sos) && !openCount && <Pill alert icon="warning-outline" text={tr('تنبيه', 'Alert')} />}
       </Header>
 
+      {/* Signal lost for 10 s: ask full screen whether the child is lost. Goes away by itself if the signal comes back */}
+      {askMember && (
+        <Modal visible animationType="fade" onRequestClose={() => setLostAsk(null)}>
+          <View style={s.ask}>
+            <View style={s.sosIcon}>
+              <Ionicons name="bluetooth-outline" size={30} color={C.danger} />
+            </View>
+            <Text style={s.sosTitle}>{tr(`انقطعت إشارة ${askMember.name}`, `Lost ${askMember.name}’s signal`)}</Text>
+            <Text style={s.askText}>
+              {tr(
+                `ما وصلنا شي من سوار ${askMember.name} من ١٠ ثواني. هو معك؟`,
+                `Nothing from ${askMember.name}’s bracelet for 10 seconds. Are they with you?`,
+              )}
+            </Text>
+            <Pressable style={[s.sosBtn, s.askBtn]} onPress={() => { setScreen({ kind: 'lost', memberId: askMember.id }); setLostAsk(null); }}>
+              <Text style={s.sosBtnText}>{tr(`${askMember.name} ضائع، أبلّغ`, `${askMember.name} is lost, report`)}</Text>
+            </Pressable>
+            <Pressable style={[s.sosBtn, s.sosBtnGhost, s.askBtn]} onPress={() => setLostAsk(null)}>
+              <Text style={[s.sosBtnText, { color: '#fff' }]}>{tr('لا، معي', 'No, they’re with me')}</Text>
+            </Pressable>
+          </View>
+        </Modal>
+      )}
+
       <ScrollView ref={scrollRef} contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
         {/* Emergency */}
         {!!sos && (
@@ -1256,7 +1290,10 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
                         `المتطوع سلّم ${justFound.name} لنقطة الأمن، توجّهوا لها مع إثبات الهوية`,
                         `The volunteer handed ${justFound.name} to a security point. Go there with your ID`,
                       )
-                    : tr(`الحمد لله على سلامة ${justFound.name}، انقفل البلاغ وانحذفت بياناته`, `So glad ${justFound.name} is safe. The report is closed and their details deleted`)
+                    : tr(
+                        `الحمد لله على سلامة ${justFound.name}، انقفل البلاغ خلال ${minSec(justFound.took, ' د', ' ث')} وانحذفت بياناته`,
+                        `So glad ${justFound.name} is safe, found in ${minSec(justFound.took, 'm', 's')}. The report is closed and their details deleted`,
+                      )
                 }
                 onPress={() => setJustFound(null)}
               />
@@ -1631,6 +1668,9 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', marginBottom: 10,
   },
   sosTitle: { color: '#fff', fontSize: 24, fontWeight: '700' },
+  ask: { flex: 1, backgroundColor: C.danger, alignItems: 'center', justifyContent: 'center', padding: 28 },
+  askText: { color: '#FDECEA', fontSize: 17, marginTop: 10, marginBottom: 18, textAlign: 'center', lineHeight: 26 },
+  askBtn: { alignSelf: 'stretch', alignItems: 'center', paddingVertical: 15 },
   sosText: { color: '#FDECEA', fontSize: 14, marginTop: 4, textAlign: 'center' },
   sosBtn: { backgroundColor: '#fff', borderRadius: 14, paddingVertical: 11, paddingHorizontal: 34, marginTop: 14 },
   sosBtnText: { color: C.danger, fontSize: 16, fontWeight: '700' },

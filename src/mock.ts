@@ -57,8 +57,10 @@ export type Report = {
   createdAt: number; // ms since epoch
   status: ReportStatus;
   assignedVolunteerId: string | null;
+  acceptedAt?: number | null; // when a volunteer took the case, for the case timeline
   closedAs: ClosedAs | null;
   closedAt: number | null;
+  reunitedAt?: number | null; // closed as 'security': when security handed the person to the family
 };
 
 export type Volunteer = {
@@ -162,6 +164,8 @@ export const members: Member[] = [
   },
 ];
 
+// Minutes before the app loaded, so demo screens show "6 minutes ago", not a 1970 date
+const ago = (min: number) => Date.now() - min * 60_000;
 const base = { status: 'open' as ReportStatus, assignedVolunteerId: null, closedAs: null, closedAt: null, phone: null };
 
 export const reports: Report[] = [
@@ -176,7 +180,7 @@ export const reports: Report[] = [
     health: null,
     area: 'منطقة المملكة، قرب المدخل',
     location: { latitude: 24.9121, longitude: 46.7042 },
-    createdAt: 0,
+    createdAt: ago(6),
   },
   {
     ...base,
@@ -189,7 +193,7 @@ export const reports: Report[] = [
     health: members[1].health,
     area: 'الساحة المركزية، عند النافورة',
     location: { latitude: 24.9087, longitude: 46.7052 },
-    createdAt: 0,
+    createdAt: ago(3),
   },
   {
     ...base,
@@ -202,7 +206,7 @@ export const reports: Report[] = [
     health: members[2].health,
     area: 'منطقة الجلوس في المجتمعات المزدهرة',
     location: { latitude: 24.9095, longitude: 46.7083 },
-    createdAt: 0,
+    createdAt: ago(1),
   },
   {
     ...base,
@@ -215,12 +219,12 @@ export const reports: Report[] = [
     health: members[3].health,
     area: 'الممر بين التعاون الدولي والتكنولوجيا التحويلية',
     location: { latitude: 24.9054, longitude: 46.7050 },
-    createdAt: 0,
+    createdAt: ago(2),
   },
 ];
 
 export const sightings: Sighting[] = [];
 
 export const passerbyReports: PasserbyReport[] = [
-  { id: 'p1', braceletId: '785005002F07', at: 0, location: { latitude: 24.9096, longitude: 46.7083 } },
+  { id: 'p1', braceletId: '785005002F07', at: ago(1), location: { latitude: 24.9096, longitude: 46.7083 } },
 ];

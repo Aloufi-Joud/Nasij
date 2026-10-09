@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../../../src/firebase';
-import { subscribeOpenReports } from '../../../src/firebase/reports';
+import { assignReport, getReportHealth, getReportPhone, reuniteAtSecurity, subscribeOpenReports } from '../../../src/firebase/reports';
 import { zones, members as mockMembers, reports as mockReports, volunteers as mockVolunteers, passerbyReports as mockPasserby, type Member, type PasserbyReport, type Point, type Report, type Sighting, type Volunteer, type Zone } from '../../../src/mock';
 import { metresBetween } from '../../../src/components/geo';
 
@@ -58,10 +58,31 @@ function useCollection<T>(name: string, ...filters: ReturnType<typeof where>[]):
 // ponytail: demo mode, no login and mock data, only in `npm run dev`. Remove once a security account exists.
 export const DEMO = import.meta.env.DEV;
 
+// One finished case (timeline and "found in" time without a bracelet) and one child waiting at the security point
+const t = Date.now() - 20 * 60_000;
+const v = mockVolunteers[1];
+const demoClosed: Report[] = [
+  { ...mockReports[0], id: 'demo-closed', createdAt: t, status: 'closed', assignedVolunteerId: v.id, acceptedAt: t + 40_000, closedAs: 'found', closedAt: t + 4 * 60_000 + 12_000, photo: null },
+  {
+    ...mockReports[1], id: 'demo-desk', member: { name: 'ريم', kind: 'child', age: 5 }, photo: null, description: 'فستان أزرق وقبعة بيضاء',
+    createdAt: t + 8 * 60_000, status: 'closed', assignedVolunteerId: v.id, acceptedAt: t + 9 * 60_000, closedAs: 'security', closedAt: t + 14 * 60_000, reunitedAt: null,
+  },
+];
+
 function useMock() {
+  const [reports, setReports] = useState(mockReports);
+  const [closed, setClosed] = useState(demoClosed);
   const memberOf = (braceletId: string) => mockMembers.find((m) => m.braceletId?.toUpperCase() === braceletId.toUpperCase());
-  const events: LiveEvent[] = mockReports.map((r) => ({ id: r.id, at: r.createdAt, kind: 'report' as const, reportId: r.id, text: `بلاغ جديد: ${r.member.name}، ${TYPE[r.type]}` }));
-  return { reports: mockReports, volunteers: mockVolunteers, passerby: mockPasserby, events, memberOf };
+  const events: LiveEvent[] = reports.map((r) => ({ id: r.id, at: r.createdAt, kind: 'report' as const, reportId: r.id, text: `بلاغ جديد: ${r.member.name}، ${TYPE[r.type]}` }));
+  const sightings: Sighting[] = zones.slice(0, 2).map((z, i) => ({ id: `ds${i}`, reportId: 'demo-closed', volunteerId: v.id, rssi: -70, at: t + (90 + i * 60) * 1000, area: z.name, location: z.center }));
+  const actions = {
+    assign: async (id: string, volunteerId: string) =>
+      setReports((rs) => rs.map((r) => (r.id === id ? { ...r, status: 'searching' as const, assignedVolunteerId: volunteerId, acceptedAt: Date.now() } : r))),
+    reunite: async (id: string) => setClosed((cs) => cs.map((r) => (r.id === id ? { ...r, reunitedAt: Date.now(), photo: null } : r))),
+    healthOf: async (id: string) => [...reports, ...closed].find((r) => r.id === id)?.health ?? null,
+    phoneOf: async () => '0500000000',
+  };
+  return { reports, closed, sightings, volunteers: mockVolunteers.filter((x) => x.onDuty), passerby: mockPasserby, events, memberOf, ...actions };
 }
 
 export const useLive = DEMO ? useMock : useFirestore;
@@ -73,6 +94,8 @@ function useFirestore() {
   const volunteers = useCollection<Volunteer>('volunteers', where('onDuty', '==', true));
   const sightings = useCollection<Sighting>('sightings', where('at', '>=', since));
   const passerby = useCollection<PasserbyReport>('passerbyReports', where('at', '>=', since));
+  // Cases closed today, for the timeline and "found in" time. A range on closedAt skips open reports (null)
+  const closed = useCollection<Report>('reports', where('closedAt', '>=', since)).sort((a, b) => b.closedAt! - a.closedAt!);
   // Bracelet number → family (from the server-side lock) → that family's member wearing it.
   // The lock decides the family, so another family writing the same braceletId on their member is ignored.
   const bracelets = useCollection<{ id: string; familyId: string }>('bracelets');
@@ -99,5 +122,8 @@ function useFirestore() {
     }),
   ].sort((a, b) => b.at - a.at).slice(0, 30);
 
-  return { reports, volunteers, passerby, events, memberOf };
+  return {
+    reports, closed, sightings, volunteers, passerby, events, memberOf,
+    assign: assignReport, reunite: reuniteAtSecurity, healthOf: getReportHealth, phoneOf: getReportPhone,
+  };
 }
