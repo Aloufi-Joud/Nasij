@@ -30,7 +30,7 @@ import { subscribeLastSeen, type LastSeen } from '../../firebase/sightings';
 import { areaOf } from '../../firebase/volunteers';
 import FoundScreen from './FoundScreen';
 import LostScreen from './LostScreen';
-import { isEn, langName, toggleLang, tr } from '../../i18n';
+import { isEn, langName, toggleLang, tr, place } from '../../i18n';
 
 const NEAR = -65;           // stronger than this = near
 const FAR = -80;            // weaker than this = far
@@ -204,7 +204,8 @@ const authError = (e: any) =>
   : e.code === 'auth/network-request-failed' ? tr('لا يوجد اتصال بالإنترنت', 'No internet connection')
   : tr('تعذر التغيير، حاول مرة أخرى', 'Couldn’t change it, try again');
 
-export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: () => void; onLogout: () => void }) {
+// shown: false while the volunteer side is open (this side stays mounted but hidden); full-screen notices wait for it
+export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { shown?: boolean; onSwitchRole: () => void; onLogout: () => void }) {
   const [bt, setBt] = useState<string>('');
   const [log, setLog] = useState<{ time: string; kind: LogKind; who: string }[]>([]);
   const [sos, setSos] = useState<{ kind: AlertKind; who: string; mac: string } | null>(null);
@@ -237,7 +238,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   const [seen, setSeen] = useState<Record<string, LastSeen | null>>({});
   const [screen, setScreen] = useState<Screen>(null);
   const [lostAsk, setLostAsk] = useState<string | null>(null); // child whose signal was just lost: ask to report
-  const [justFound, setJustFound] = useState<{ name: string; as: Report['closedAs']; took: number } | null>(null);
+  const [justFound, setJustFound] = useState<{ name: string; as: Report['closedAs']; took: number; point: string | null; big: boolean } | null>(null);
   const [linkFor, setLinkFor] = useState<string | null>(null); // member whose link panel is open
   const [typedMac, setTypedMac] = useState('');
   const [live, setLive] = useState<Record<string, Live>>({});
@@ -254,6 +255,8 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   const meRef = useRef<Point | null>(null);
   const centerRef = useRef<Point | null>(null);
   const sosRef = useRef(false);
+  // Reports this family closed itself: no big "we found them" screen for those
+  const ownClose = useRef(new Set<string>());
   const scrollRef = useRef<ScrollView>(null);
 
   // The scan timer reads the latest members through a ref
@@ -576,6 +579,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
     const free = { ...m, mac: null };
     setMembers((list) => list.map((x) => (x.id === m.id ? free : x)));
     if (r) setReports(({ [m.id]: _, ...rest }) => rest);
+    if (r) ownClose.current.add(r.id);
     return Promise.allSettled([releaseBracelet(mac), save(free), r && closeReport(r.id, 'found')]);
   };
   const askUnlink = (m: FamMember) =>
@@ -603,7 +607,8 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         setReports(({ [memberId]: _, ...rest }) => rest);
         setScreen((s) => (s?.memberId === memberId ? null : s));
         if (!r || r.closedAs === 'expired') return; // closed by the hourly cleanup, not because they were found
-        setJustFound({ name: r.member.name, as: r.closedAs, took: (r.closedAt ?? Date.now()) - r.createdAt });
+        // Closed by a volunteer: a full-screen notice (with where to go if handed to security)
+        setJustFound({ name: r.member.name, as: r.closedAs, took: (r.closedAt ?? Date.now()) - r.createdAt, point: r.securityPoint ?? null, big: !ownClose.current.has(r.id) });
         addLog('FOUND', r.member.name);
       });
     });
@@ -662,7 +667,9 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   // Closing also deletes the photo, health and phone; the live report then shows "found"
   const confirmFound = (memberId: string) => {
     const r = reports[memberId];
-    if (r) closeReport(r.id, 'found').catch(() => failed(tr('تعذر إغلاق البلاغ', 'Couldn’t close the report')));
+    if (!r) return;
+    ownClose.current.add(r.id);
+    closeReport(r.id, 'found').catch(() => failed(tr('تعذر إغلاق البلاغ', 'Couldn’t close the report')));
   };
 
   // Linking starts here: the bracelet is linked only after the press check passes
@@ -682,6 +689,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
   // Resolves once Firestore is done, so "end of visit" signs out only after the deletes.
   const clearMember = (m: FamMember) => {
     const r = reports[m.id];
+    if (r) ownClose.current.add(r.id);
     const done = Promise.allSettled([unlink(m), deleteMember(m.id), r && closeReport(r.id, 'found')]);
     if (pairing.current?.memberId === m.id) cancelPair();
     setMembers((list) => list.filter((x) => x.id !== m.id));
@@ -1071,7 +1079,7 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
             {seen[m.id] && (() => {
               const s = seen[m.id]!;
               const min = Math.max(0, Math.floor((now - s.at) / 60_000));
-              const where = s.area || tr('قرب متطوع', 'near a volunteer');
+              const where = s.area ? place(s.area) : tr('قرب متطوع', 'near a volunteer');
               const when = min < 1 ? tr('الآن', 'just now') : tr(`قبل ${min} د`, `${min} min ago`);
               return <Banner tone="info" icon="location-outline" text={tr(`آخر إشارة للسوار: ${where} · ${when}`, `Bracelet last heard: ${where} · ${when}`)} />;
             })()}
@@ -1178,26 +1186,77 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
         {(warnAny || !!sos) && !openCount && <Pill alert icon="warning-outline" text={tr('تنبيه', 'Alert')} />}
       </Header>
 
+      {/* Found and handed to security: full screen, with where to pick them up */}
+      {shown && justFound?.big && (
+        <Modal visible animationType="fade" onRequestClose={() => setJustFound({ ...justFound, big: false })}>
+          <View style={[s.ask, { backgroundColor: C.safe }]}>
+            {/* The screen fades in natively; the content follows in a short stagger */}
+            <FadeIn pop delay={60} style={s.sosIcon}>
+              <Ionicons name="shield-checkmark" size={30} color={C.safe} />
+            </FadeIn>
+            <FadeIn delay={120}>
+              <Text style={s.sosTitle}>{tr(`لقينا ${justFound.name}`, `We found ${justFound.name}`)}</Text>
+            </FadeIn>
+            <FadeIn delay={170}>
+            <Text style={s.askText}>
+              {justFound.as === 'security'
+                ? tr(
+                    `${justFound.name} بأمان عند نقطة الأمن، بعد ${minSec(justFound.took, ' د', ' ث')} من البلاغ. توجّهوا لها مع إثبات الهوية`,
+                    `${justFound.name} is safe at the security point, ${minSec(justFound.took, 'm', 's')} after the report. Go there with your ID`,
+                  )
+                : justFound.as === 'helped'
+                  ? tr(
+                      `المتطوع وصل لـ${justFound.name} وساعده وهو بخير، بعد ${minSec(justFound.took, ' د', ' ث')} من البلاغ`,
+                      `The volunteer reached ${justFound.name} and helped, they’re fine, ${minSec(justFound.took, 'm', 's')} after the report`,
+                    )
+                  : tr(
+                      `الحمد لله على سلامة ${justFound.name}، رجع لكم بعد ${minSec(justFound.took, ' د', ' ث')} من البلاغ. انقفل البلاغ وانحذفت بياناته`,
+                      `So glad ${justFound.name} is safe, back with you ${minSec(justFound.took, 'm', 's')} after the report. The report is closed and their details deleted`,
+                    )}
+            </Text>
+            </FadeIn>
+            {justFound.point && (
+              <FadeIn delay={220} style={s.point}>
+                <Ionicons name="location" size={22} color={C.safe} />
+                <Text style={s.pointText}>{place(justFound.point)}</Text>
+              </FadeIn>
+            )}
+            <FadeIn delay={justFound.point ? 270 : 220} style={s.askBtns}>
+              <Pressable style={[s.sosBtn, s.askBtn]} onPress={() => setJustFound({ ...justFound, big: false })}>
+                <Text style={[s.sosBtnText, { color: C.safe }]}>{justFound.as === 'security' ? tr('تمام، رايحين لها', 'OK, on our way') : tr('الحمد لله', 'Thank you')}</Text>
+              </Pressable>
+            </FadeIn>
+          </View>
+        </Modal>
+      )}
+
       {/* Signal lost for 10 s: ask full screen whether the child is lost. Goes away by itself if the signal comes back */}
-      {askMember && (
+      {shown && askMember && (
         <Modal visible animationType="fade" onRequestClose={() => setLostAsk(null)}>
           <View style={s.ask}>
-            <View style={s.sosIcon}>
+            {/* Urgent: a tighter stagger than the green one, so the buttons are there within a quarter second */}
+            <FadeIn pop style={s.sosIcon}>
               <Ionicons name="bluetooth-outline" size={30} color={C.danger} />
-            </View>
-            <Text style={s.sosTitle}>{tr(`انقطعت إشارة ${askMember.name}`, `Lost ${askMember.name}’s signal`)}</Text>
-            <Text style={s.askText}>
-              {tr(
-                `ما وصلنا شي من سوار ${askMember.name} من ١٠ ثواني. هو معك؟`,
-                `Nothing from ${askMember.name}’s bracelet for 10 seconds. Are they with you?`,
-              )}
-            </Text>
-            <Pressable style={[s.sosBtn, s.askBtn]} onPress={() => { setScreen({ kind: 'lost', memberId: askMember.id }); setLostAsk(null); }}>
-              <Text style={s.sosBtnText}>{tr(`${askMember.name} ضائع، أبلّغ`, `${askMember.name} is lost, report`)}</Text>
-            </Pressable>
-            <Pressable style={[s.sosBtn, s.sosBtnGhost, s.askBtn]} onPress={() => setLostAsk(null)}>
-              <Text style={[s.sosBtnText, { color: '#fff' }]}>{tr('لا، معي', 'No, they’re with me')}</Text>
-            </Pressable>
+            </FadeIn>
+            <FadeIn delay={50}>
+              <Text style={s.sosTitle}>{tr(`انقطعت إشارة ${askMember.name}`, `Lost ${askMember.name}’s signal`)}</Text>
+            </FadeIn>
+            <FadeIn delay={90}>
+              <Text style={s.askText}>
+                {tr(
+                  `ما وصلنا شي من سوار ${askMember.name} من ١٠ ثواني. هو معك؟`,
+                  `Nothing from ${askMember.name}’s bracelet for 10 seconds. Are they with you?`,
+                )}
+              </Text>
+            </FadeIn>
+            <FadeIn delay={130} style={s.askBtns}>
+              <Pressable style={[s.sosBtn, s.askBtn]} onPress={() => { setScreen({ kind: 'lost', memberId: askMember.id }); setLostAsk(null); }}>
+                <Text style={s.sosBtnText}>{tr(`${askMember.name} ضائع، أبلّغ`, `${askMember.name} is lost, report`)}</Text>
+              </Pressable>
+              <Pressable style={[s.sosBtn, s.sosBtnGhost, s.askBtn]} onPress={() => setLostAsk(null)}>
+                <Text style={[s.sosBtnText, { color: '#fff' }]}>{tr('لا، معي', 'No, they’re with me')}</Text>
+              </Pressable>
+            </FadeIn>
           </View>
         </Modal>
       )}
@@ -1287,8 +1346,8 @@ export default function FamilyApp({ onSwitchRole, onLogout }: { onSwitchRole: ()
                 text={
                   justFound.as === 'security'
                     ? tr(
-                        `المتطوع سلّم ${justFound.name} لنقطة الأمن، توجّهوا لها مع إثبات الهوية`,
-                        `The volunteer handed ${justFound.name} to a security point. Go there with your ID`,
+                        `${justFound.name} عند نقطة الأمن${justFound.point ? `: ${place(justFound.point)}` : ''}. توجّهوا لها مع إثبات الهوية`,
+                        `${justFound.name} is at the security point${justFound.point ? `: ${place(justFound.point)}` : ''}. Go there with your ID`,
                       )
                     : tr(
                         `الحمد لله على سلامة ${justFound.name}، انقفل البلاغ خلال ${minSec(justFound.took, ' د', ' ث')} وانحذفت بياناته`,
@@ -1671,6 +1730,9 @@ const s = StyleSheet.create({
   ask: { flex: 1, backgroundColor: C.danger, alignItems: 'center', justifyContent: 'center', padding: 28 },
   askText: { color: '#FDECEA', fontSize: 17, marginTop: 10, marginBottom: 18, textAlign: 'center', lineHeight: 26 },
   askBtn: { alignSelf: 'stretch', alignItems: 'center', paddingVertical: 15 },
+  askBtns: { alignSelf: 'stretch' },
+  point: { flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 8, alignSelf: 'stretch', backgroundColor: '#fff', borderRadius: 16, padding: 16, marginBottom: 6 },
+  pointText: { flexShrink: 1, color: C.primary, fontSize: 18, fontWeight: '700', textAlign: 'center' },
   sosText: { color: '#FDECEA', fontSize: 14, marginTop: 4, textAlign: 'center' },
   sosBtn: { backgroundColor: '#fff', borderRadius: 14, paddingVertical: 11, paddingHorizontal: 34, marginTop: 14 },
   sosBtnText: { color: C.danger, fontSize: 16, fontWeight: '700' },

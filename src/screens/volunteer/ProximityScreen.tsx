@@ -7,7 +7,7 @@ import { Pressable } from '../../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
 import type { ComponentProps } from 'react';
 import { C, F, ui } from '../../theme';
-import { tr } from '../../i18n';
+import { place, tr } from '../../i18n';
 import type { Report } from '../../mock';
 import ReportPhoto from './ReportPhoto';
 import { TYPE_UI, whoLine } from './labels';
@@ -37,7 +37,7 @@ export default function ProximityScreen({ report: r, signal, now, onHealth, onCl
     ? TREND_VIEW[signal.trend]
     : {
         label: lost ? tr('انقطعت الإشارة', 'Signal lost') : tr('لم يلتقط جوالك السوار بعد', 'Your phone hasn’t picked up the bracelet yet'),
-        hint: lost ? tr('ارجع لآخر مكان التقطت فيه الإشارة', 'Go back to where you last had the signal') : tr(`امشِ في المنطقة: ${r.area}`, `Walk around: ${r.area}`),
+        hint: lost ? tr('ارجع لآخر مكان التقطت فيه الإشارة', 'Go back to where you last had the signal') : tr(`امشِ في المنطقة: ${r.area}`, `Walk around: ${place(r.area)}`),
         color: lost ? C.danger : C.faint,
         bg: lost ? C.dangerBg : C.fill,
         icon: (lost ? 'close' : 'radio-outline') as Icon,

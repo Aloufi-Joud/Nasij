@@ -34,6 +34,7 @@ export default function App() {
       {opened.includes('family') && (
         <View style={{ flex: 1, display: role === 'family' ? 'flex' : 'none' }}>
           <FamilyApp
+            shown={role === 'family'}
             onSwitchRole={switchRole}
             onLogout={() => {
               setRole(null);

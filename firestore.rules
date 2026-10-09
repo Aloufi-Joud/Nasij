@@ -58,7 +58,8 @@ service cloud.firestore {
         // in /handover, which the volunteer cannot read. ponytail: 6 digits can be brute-forced by script;
         // a Cloud Function check (Blaze plan) is the better fix, see the brief section 11
         || ((isOwner() || isAssigned()) && request.resource.data.status == 'closed'
-            && changes(['status', 'closedAs', 'closedAt', 'photo', 'handover'])
+            && changes(['status', 'closedAs', 'closedAt', 'photo', 'handover', 'securityPoint'])
+            && request.resource.data.get('securityPoint', '') is string && request.resource.data.get('securityPoint', '').size() <= 100
             // a child's report (hasCode) closes only as 'found' with the code, or 'security' (the family is told where)
             && (isOwner() || resource.data.get('hasCode', false) != true
                 || request.resource.data.closedAs == 'security'

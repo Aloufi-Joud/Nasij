@@ -69,7 +69,7 @@ function timeline(r: Report, sightings: Sighting[], passerby: PasserbyReport[], 
       steps.push({ at: p.at, kind: 'passerby', text: 'مارّ أبلغ عن السوار' });
     }
   }
-  if (r.closedAt) steps.push({ at: r.closedAt, kind: 'report', text: `${CLOSED[r.closedAs ?? 'found']} خلال ${took(r)}` });
+  if (r.closedAt) steps.push({ at: r.closedAt, kind: 'report', text: `${CLOSED[r.closedAs ?? 'found']}${r.securityPoint ? ` (${r.securityPoint})` : ''} خلال ${took(r)}` });
   if (r.reunitedAt) steps.push({ at: r.reunitedAt, kind: 'report', text: 'سُلّم لولي الأمر عند نقطة الأمن' });
   return steps.sort((a, b) => a.at - b.at);
 }

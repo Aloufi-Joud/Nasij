@@ -2,7 +2,7 @@
 // so both languages sit together at the call site. App re-renders the whole tree when the language changes.
 // ponytail: the choice is not saved, the app opens in Arabic each time; persist it if users ask
 import { useSyncExternalStore } from 'react';
-import type { Language } from './mock';
+import { zones, type Language } from './mock';
 
 export type UiLang = 'ar' | 'en';
 
@@ -11,6 +11,9 @@ const subs = new Set<() => void>();
 
 export const isEn = () => lang === 'en';
 export const tr = (ar: string, en: string) => (lang === 'en' ? en : ar);
+// A stored place ("zone" or "zone · pavilion"): reports keep the Arabic zone name, so translate it when shown
+export const place = (text: string) =>
+  lang === 'en' ? text.split(' · ').map((part) => zones.find((z) => z.name === part)?.en ?? part).join(' · ') : text;
 
 export function toggleLang() {
   lang = lang === 'en' ? 'ar' : 'en';

@@ -97,10 +97,11 @@ export function assignReport(id: string, volunteerId: string): Promise<void> {
 // A wrong code fails with permission-denied.
 // Handed to security: the person now waits at the security point, so the photo, health and family phone stay
 // for security (volunteers can no longer read a closed report) until reuniteAtSecurity()
-export async function closeReport(id: string, closedAs: ClosedAs, handover?: string): Promise<void> {
+// securityPoint: where security keeps them (zone and pavilion), shown to the family
+export async function closeReport(id: string, closedAs: ClosedAs, handover?: string, securityPoint?: string): Promise<void> {
   const keep = closedAs === 'security';
   const batch = writeBatch(db);
-  batch.update(doc(reports, id), { status: 'closed', closedAs, closedAt: Date.now(), ...(keep ? {} : { photo: null }), ...(handover ? { handover } : {}) });
+  batch.update(doc(reports, id), { status: 'closed', closedAs, closedAt: Date.now(), ...(keep ? {} : { photo: null }), ...(handover ? { handover } : {}), ...(securityPoint ? { securityPoint } : {}) });
   if (handover) batch.delete(handoverDoc(id, handover));
   if (!keep) batch.delete(healthDoc(id));
   if (!keep) batch.delete(contactDoc(id));
