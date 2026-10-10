@@ -1,6 +1,7 @@
 // Volunteer on-duty status and location in volunteers/{uid} (Person 3).
 // Same shape as Volunteer in mock.ts. The document exists only while the volunteer is on duty:
-// going off duty deletes it, so their location is not kept after the shift (PDPL).
+// going off duty deletes it, so their location is not kept after the shift (PDPL). If the app is closed
+// while on duty, the hourly cleanup deletes it once `at` is an hour old.
 // The security dashboard reads volunteers where onDuty == true.
 import { deleteDoc, doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from './index';
@@ -28,7 +29,7 @@ export const lastVolunteerLocation = () => last;
 async function write() {
   if (!duty || !last) return; // Volunteer.location is required: wait for the first location
   lastWrite = Date.now(); // set before the write, so a failing write is not retried on every update
-  const v: Omit<Volunteer, 'id'> = { name: duty.name, onDuty: true, area: areaOf(last), location: last };
+  const v: Omit<Volunteer, 'id'> = { name: duty.name, onDuty: true, area: areaOf(last), location: last, at: lastWrite };
   const uid = duty.uid;
   await setDoc(volunteerDoc(uid), v);
   if (!duty) await deleteDoc(volunteerDoc(uid)); // went off duty while this write was on its way

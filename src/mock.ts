@@ -70,6 +70,7 @@ export type Volunteer = {
   onDuty: boolean;
   area: string;
   location: Point;
+  at?: number; // last location write; the hourly cleanup deletes the document when it is old (app closed while on duty)
 };
 
 // A volunteer's phone heard a reported bracelet
