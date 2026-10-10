@@ -48,6 +48,18 @@ await step('login', () =>
 
 // One account plays the family, then the volunteer
 await step('family role', () => role('family'));
+const br = await import('./bracelets');
+await step('family links the test bracelet (a report needs a bracelet the family holds)', async () =>
+  assert.equal(await br.claimBracelet('TEST00000000'), true),
+);
+await step("a report with someone else's bracelet is refused", () =>
+  assert.rejects(() =>
+    r.createReport({
+      type: 'lost', braceletId: 'FFFFFFFFFFFF', member: { name: 'x', kind: 'child', age: 5 },
+      photo: null, description: 'check.mjs', health: null, area: 'test', location: null,
+    }),
+  ),
+);
 const id = await step('family creates a report', () =>
   r.createReport({
     type: 'lost', braceletId: 'TEST00000000', member: { name: 'اختبار', kind: 'child', age: 5 },
