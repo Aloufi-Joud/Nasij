@@ -310,6 +310,8 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 - **At most 5 reports per family in 10 minutes** (`reportLimits/{family}`, written by `createReport` in the same batch). `createReport` throws `too many reports` past that
 - **A report photo must be an image inside the report** (`data:image/jpeg|png|webp;base64,...`, under 700 KB), never a link. Keep this in mind for `expo-image-picker`: send it as base64
 - Fixed 2026-10-10: for about an hour, saving a member was refused by the rules (a check meant for bracelet locks had gone into the members rule)
+- **Length limits in the rules:** names 60, phone 20, description and health notes 300, health condition 100 characters (members, reports, health, contact, profile). The family app's inputs stop at the same lengths
+- `.gitignore` now skips Firebase service account key files and `.firebase/`
 - **Live addresses:** passer-by page `https://nasij-0.web.app`, security dashboard `https://nasij-0-dashboard.web.app` (Firebase Hosting, `firebase.json`). To publish after a change: `npm --prefix web/report run build` (or `web/dashboard`), then `npx firebase-tools deploy --only hosting`. Rules: `npx firebase-tools deploy --only firestore:rules`
 - **Security account:** create the user in Firebase Authentication, then add `users/{uid}` with `role: "security"` by hand in the console (the rules never let the app set that role)
 - Dashboard passer-by list says "outside the event site" instead of "unknown location" when the report has a location away from the Expo site
@@ -383,6 +385,8 @@ The focus now is visible features: build the app first, then harden it step by s
 - **Copies outlive the case:** the child's photo can stay on volunteers' phones after the report closes
 - **Volunteer location is personal data (PDPL):** done: kept only while on duty, and the hourly cleanup removes it if the app closed on duty. Sightings still keep the volunteer's exact point for up to a day (security only)
 - **Early warning with the phone locked:** the app warns only while open. iOS background scanning ignores `allowDuplicates` (rare readings, false "signal lost"), and may not match a `FEE0` filter because `FEE0` is sent as service data, not as an advertised service UUID. Pitch: fast, privacy-safe search once someone is lost; early warning while the app is open
+- **Privacy notice and consent (PDPL, OWASP M6):** a short screen at signup: what is collected, why, when it is deleted, with an agree button. Decided 2026-10-10: later, not now
+- **At the next Mac build (OWASP M9, M10):** keep only the login session in AsyncStorage (never health, photo or codes); make the handover code with `expo-crypto` instead of `Math.random()`
 - **Battery:** the vendor's 1.5 years likely assumes power saving on; measure it with power saving off and 500 ms intervals
 - **Resetting bracelets at the exit gate:** each needs a password connection and a sticker rewrite; time it before promising it
 

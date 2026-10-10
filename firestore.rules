@@ -10,20 +10,28 @@ service cloud.firestore {
     function isVolunteer() { return signedIn() && role() == 'volunteer'; }
     // A client clock within 5 minutes of the server's
     function nearNow(ms) { return ms > request.time.toMillis() - 300000 && ms < request.time.toMillis() + 300000; }
+    // Free text has a length limit (the app's inputs stop at the same lengths): a missing or null field is fine
+    function short(d, field, max) { return d.get(field, null) == null || (d[field] is string && d[field].size() <= max); }
+    function shortHealth(h) { return h == null || (short(h, 'condition', 100) && short(h, 'notes', 300)); }
     function changes(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
 
     // A user may pick family or volunteer for themselves, never security.
     // ponytail: volunteer is self-chosen at login; staff-assigned volunteer role is in the "later" list
     match /users/{uid} {
       allow read: if signedIn() && (me() == uid || isSecurity());
-      allow write: if signedIn() && me() == uid && request.resource.data.role in ['family', 'volunteer'];
+      allow write: if signedIn() && me() == uid && request.resource.data.role in ['family', 'volunteer']
+        && short(request.resource.data, 'name', 60) && short(request.resource.data, 'phone', 20);
     }
 
     // Members of a family (several per account), health and phone included: the family and security only
     match /members/{id} {
+      function valid() {
+        let d = request.resource.data;
+        return short(d, 'name', 60) && short(d, 'phone', 20) && short(d, 'description', 300) && shortHealth(d.get('health', null));
+      }
       allow read: if signedIn() && (resource.data.familyId == me() || isSecurity());
-      allow create: if signedIn() && request.resource.data.familyId == me();
-      allow update: if signedIn() && resource.data.familyId == me() && request.resource.data.familyId == me();
+      allow create: if signedIn() && request.resource.data.familyId == me() && valid();
+      allow update: if signedIn() && resource.data.familyId == me() && request.resource.data.familyId == me() && valid();
       allow delete: if signedIn() && resource.data.familyId == me();
     }
 
@@ -49,6 +57,8 @@ service cloud.firestore {
         && request.resource.data.familyId == me()
         && request.resource.data.status == 'open'
         && request.resource.data.assignedVolunteerId == null
+        && short(request.resource.data, 'description', 300) && short(request.resource.data, 'area', 60)
+        && short(request.resource.data.member, 'name', 60)
         && (request.resource.data.braceletId == ''
             || get(/databases/$(database)/documents/bracelets/$(request.resource.data.braceletId)).data.familyId == me())
         // The photo is a small image inside the report, never a link (a link would let its owner see who opens it)
@@ -96,7 +106,8 @@ service cloud.firestore {
       match /private/{doc} {
         function report() { return get(/databases/$(database)/documents/reports/$(id)).data; }
         // created in the same batch as the report, so read the report as it will be
-        allow create: if signedIn() && getAfter(/databases/$(database)/documents/reports/$(id)).data.familyId == me();
+        allow create: if signedIn() && getAfter(/databases/$(database)/documents/reports/$(id)).data.familyId == me()
+          && short(request.resource.data, 'phone', 20) && shortHealth(request.resource.data);
         allow read, delete: if signedIn() && (report().familyId == me() || report().assignedVolunteerId == me() || isSecurity());
       }
 

@@ -45,3 +45,10 @@ brag-output*/
 
 # personal test script, kept locally
 nasij volunteer.py
+
+# Firebase: service account keys (scripts/cleanup.mjs, scripts/tokens.mjs) and the deploy cache. Never commit a key
+*serviceAccount*.json
+*service-account*.json
+*-firebase-adminsdk-*.json
+key.json
+.firebase/
