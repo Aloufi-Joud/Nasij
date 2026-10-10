@@ -25,7 +25,7 @@ if (!email || !password) {
   process.exit(1);
 }
 
-const { createUserWithEmailAndPassword, signInWithEmailAndPassword } = await import('firebase/auth');
+const { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } = await import('firebase/auth');
 const { doc, setDoc } = await import('firebase/firestore');
 const { auth, db } = await import('./index');
 const r = await import('./reports');
@@ -40,11 +40,10 @@ const step = async (name, fn) => {
     throw e;
   }
 };
-const role = (name) => setDoc(doc(db, 'users', auth.currentUser.uid), { email, role: name }, { merge: true });
+const role = (name) => setDoc(doc(db, 'users', auth.currentUser.uid), { email: auth.currentUser.email, role: name }, { merge: true });
+const login = (e) => signInWithEmailAndPassword(auth, e, password).catch(() => createUserWithEmailAndPassword(auth, e, password));
 
-await step('login', () =>
-  signInWithEmailAndPassword(auth, email, password).catch(() => createUserWithEmailAndPassword(auth, email, password)),
-);
+await step('login', () => login(email));
 
 // One account plays the family, then the volunteer
 await step('family role', () => role('family'));
@@ -68,32 +67,38 @@ await step('a report whose photo is a link is refused', () =>
     }),
   ),
 );
-const id = await step('family creates a report', () =>
+const PHOTO = 'data:image/png;base64,iVBORw0KGgo=';
+const id = await step('family creates a report with a photo', () =>
   r.createReport({
     type: 'lost', braceletId: 'TEST00000000', member: { name: 'اختبار', kind: 'child', age: 5 },
-    photo: null, description: 'check.mjs', health: { condition: 'Asthma', notes: 'inhaler' }, area: 'test', location: null,
+    photo: PHOTO, description: 'check.mjs', health: { condition: 'Asthma', notes: 'inhaler' }, area: 'test', location: null,
   }),
 );
 
 await step('volunteer role', () => role('volunteer'));
-await step('open reports list it, without health', async () => {
+await step('open reports list it, without health or photo', async () => {
   const open = await new Promise((res, rej) => {
     const stop = r.subscribeOpenReports((list) => (stop(), res(list)));
     setTimeout(() => rej(new Error('no answer in 10 s')), 10_000);
   });
-  assert(open.some((x) => x.id === id && x.health === null));
+  assert(open.some((x) => x.id === id && x.health === null && x.photo === null));
+});
+// This account is also the report's family (which may read the photo), so the refusal needs a second account
+await step('another volunteer cannot read the photo', async () => {
+  await login(email.replace('@', '+volunteer@'));
+  await role('volunteer');
+  await assert.rejects(() => r.getReportPhoto(id));
+  await login(email);
 });
 await step('volunteer accepts it', async () => assert.equal(await r.acceptReport(id, auth.currentUser.uid), true));
 await step('a second accept is refused', async () => assert.equal(await r.acceptReport(id, auth.currentUser.uid), false));
-await step('assigned volunteer reads health', async () => assert.equal((await r.getReportHealth(id))?.condition, 'Asthma'));
-await step('close deletes health', async () => {
-  await r.closeReport(id, 'found');
-  assert.equal(await r.getReportHealth(id), null);
+await step('assigned volunteer reads health and photo', async () => {
+  assert.equal((await r.getReportHealth(id))?.condition, 'Asthma');
+  assert.equal(await r.getReportPhoto(id), PHOTO);
 });
 
 // Person 3: volunteer duty, sightings and passer-by (the account is still a volunteer here)
 const { getDoc } = await import('firebase/firestore');
-const { signOut } = await import('firebase/auth');
 const v = await import('./volunteers');
 const sg = await import('./sightings');
 const pb = await import('./passerby');
@@ -114,14 +119,23 @@ await step('volunteer goes on duty with a location', async () => {
 });
 await step('volunteer adds a sighting', async () => assert.equal(await sg.addSighting(id, -72), true));
 await step('a second sighting within 10 s is skipped', async () => assert.equal(await sg.addSighting(id, -70), false));
-await step('sightings of the report list it', async () => {
-  const list = await first((ok, err) => sg.subscribeSightings(id, ok, err));
-  assert(list.some((s) => s.rssi === -72 && s.area === 'الساحة المركزية'));
+// Asked from the server: a live listener first answers from this phone's own copy of the sighting it just wrote
+await step('a volunteer cannot read sightings (security only)', async () => {
+  const { collection, getDocsFromServer, query, where } = await import('firebase/firestore');
+  await assert.rejects(() => getDocsFromServer(query(collection(db, 'sightings'), where('reportId', '==', id))));
 });
 await step('off duty deletes the volunteer document', async () => {
   await v.goOffDuty();
   assert.equal((await getDoc(vDoc())).exists(), false);
 });
+// Closed last: sightings need an open report
+await step('close deletes health and photo', async () => {
+  await r.closeReport(id, 'found');
+  assert.equal(await r.getReportHealth(id), null);
+  assert.equal(await r.getReportPhoto(id), null);
+});
+// Free the test bracelet, so the next run (maybe with another account) can link it
+await step('family releases the test bracelet', () => br.releaseBracelet('TEST00000000'));
 
 const since = Date.now() - 1000;
 await step('a made-up sticker is refused', async () => {

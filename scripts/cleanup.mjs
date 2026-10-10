@@ -12,6 +12,8 @@ const KEEP_LOCATIONS_MS = 24 * 60 * 60 * 1000;
 // ponytail: a volunteer who stands still writes no location, so one still for an hour drops off the dashboard
 // until they move; a heartbeat write would fix it, at the cost of free-plan writes
 const VOLUNTEER_STALE_MS = 60 * 60 * 1000;
+// No visit lasts this long: a family that left without "end of visit" frees the bracelet for the next one
+const BRACELET_LOCK_MS = 12 * 60 * 60 * 1000;
 
 initializeApp({ credential: cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)) });
 const db = getFirestore();
@@ -22,7 +24,7 @@ const open = await db.collection('reports').where('status', 'in', ['open', 'sear
 for (const report of open.docs) {
   if (report.data().createdAt > now - MAX_OPEN_MS) continue;
   const batch = db.batch();
-  batch.update(report.ref, { status: 'closed', closedAs: 'expired', closedAt: now, photo: null });
+  batch.update(report.ref, { status: 'closed', closedAs: 'expired', closedAt: now });
   for (const sub of ['private', 'handover', 'seen'])
     for (const d of (await report.ref.collection(sub).get()).docs) batch.delete(d.ref);
   await batch.commit();
@@ -35,7 +37,7 @@ for (const report of atDesk.docs) {
   const r = report.data();
   if (r.reunitedAt || r.closedAt > now - MAX_OPEN_MS) continue;
   const batch = db.batch();
-  batch.update(report.ref, { reunitedAt: now, photo: null });
+  batch.update(report.ref, { reunitedAt: now });
   for (const d of (await report.ref.collection('private').get()).docs) batch.delete(d.ref);
   await batch.commit();
   closed++;
@@ -59,4 +61,10 @@ for (const v of (await db.collection('volunteers').get()).docs) {
   gone++;
 }
 
-console.log(`closed ${closed} old reports, deleted ${deleted} old sightings and passer-by reports, ${gone} stale volunteers`);
+let freed = 0;
+for (const b of (await db.collection('bracelets').where('at', '<', now - BRACELET_LOCK_MS).get()).docs) {
+  await b.ref.delete();
+  freed++;
+}
+
+console.log(`closed ${closed} old reports, deleted ${deleted} old sightings and passer-by reports, ${gone} stale volunteers, freed ${freed} bracelets`);

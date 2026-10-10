@@ -29,7 +29,7 @@ export default function LostScreen(p: {
       <Banner
         tone="info"
         icon="lock-closed-outline"
-        text={tr('المتطوعون القريبون بيشوفون الصورة والوصف بس، وتنحذف أول ما تلقونه', 'Nearby volunteers see only the photo and description, deleted as soon as you find them')}
+        text={tr('المتطوعون القريبون يشوفون الوصف، والصورة يشوفها بس المتطوع اللي يستلم البلاغ، وتنحذف أول ما تلقونه', 'Nearby volunteers see the description; only the volunteer who takes the case sees the photo, deleted as soon as you find them')}
       />
 
       <View style={ui.card}>

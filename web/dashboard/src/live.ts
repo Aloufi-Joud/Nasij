@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../../../src/firebase';
-import { assignReport, getReportHealth, getReportPhone, reuniteAtSecurity, subscribeOpenReports } from '../../../src/firebase/reports';
+import { assignReport, getReportHealth, getReportPhone, getReportPhoto, reuniteAtSecurity, subscribeOpenReports } from '../../../src/firebase/reports';
 import { zones, members as mockMembers, reports as mockReports, volunteers as mockVolunteers, passerbyReports as mockPasserby, type Member, type PasserbyAlert, type PasserbyReport, type Point, type Report, type Sighting, type Volunteer, type Zone } from '../../../src/mock';
 import { metresBetween } from '../../../src/components/geo';
 
@@ -81,6 +81,7 @@ function useMock() {
     reunite: async (id: string) => setClosed((cs) => cs.map((r) => (r.id === id ? { ...r, reunitedAt: Date.now(), photo: null } : r))),
     healthOf: async (id: string) => [...reports, ...closed].find((r) => r.id === id)?.health ?? null,
     phoneOf: async () => '0500000000',
+    photoOf: async (id: string) => [...reports, ...closed].find((r) => r.id === id)?.photo ?? null,
   };
   return { reports, closed, sightings, volunteers: mockVolunteers.filter((x) => x.onDuty), passerby: mockPasserby, alerts: [] as (PasserbyAlert & { id: string })[], events, memberOf, ...actions };
 }
@@ -126,6 +127,6 @@ function useFirestore() {
 
   return {
     reports, closed, sightings, volunteers, passerby, alerts, events, memberOf,
-    assign: assignReport, reunite: reuniteAtSecurity, healthOf: getReportHealth, phoneOf: getReportPhone,
+    assign: assignReport, reunite: reuniteAtSecurity, healthOf: getReportHealth, phoneOf: getReportPhone, photoOf: getReportPhoto,
   };
 }

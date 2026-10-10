@@ -1,6 +1,6 @@
-// Reports in Firestore. Same shape as Report in mock.ts, except health and the family phone live in
-// reports/{id}/private/health and private/contact: rules work per document, so this is the only way
-// to show them to the assigned volunteer alone.
+// Reports in Firestore. Same shape as Report in mock.ts, except health, the family phone and the photo live in
+// reports/{id}/private/health, private/contact and private/photo: rules work per document, so this is the only
+// way to show them to the assigned volunteer alone.
 import {
   collection, doc, getDoc, getDocs, onSnapshot, query, runTransaction, updateDoc, where, writeBatch, type DocumentSnapshot,
 } from 'firebase/firestore';
@@ -15,18 +15,19 @@ export type NewReport = Omit<Report, 'id' | 'createdAt' | 'status' | 'assignedVo
 const reports = collection(db, 'reports');
 const healthDoc = (id: string) => doc(db, 'reports', id, 'private', 'health');
 const contactDoc = (id: string) => doc(db, 'reports', id, 'private', 'contact');
+const photoDoc = (id: string) => doc(db, 'reports', id, 'private', 'photo');
 // The code is the document id, so the rules can check a typed code with exists() while volunteers cannot read it
 const handoverDoc = (id: string, code: string) => doc(db, 'reports', id, 'handover', code);
-// Reports as listed and followed: health and phone stay in their own documents, so they are always null here
+// Reports as listed and followed: health, phone and photo stay in their own documents, so they are always null here
 const toReport = (d: DocumentSnapshot): Report => ({
-  ...(d.data() as Omit<Report, 'id' | 'health' | 'phone'>), id: d.id, health: null, phone: null,
+  ...(d.data() as Omit<Report, 'id' | 'health' | 'phone' | 'photo'>), id: d.id, health: null, phone: null, photo: null,
 });
 
 // At most REPORTS_PER_WINDOW reports per family in REPORT_WINDOW_MS (also in the rules: keep both in sync)
 const REPORT_WINDOW_MS = 10 * 60_000;
 const REPORTS_PER_WINDOW = 5;
 
-export async function createReport({ health, phone, code, ...r }: NewReport): Promise<string> {
+export async function createReport({ health, phone, photo, code, ...r }: NewReport): Promise<string> {
   // familyId: the rules let only this family follow and close its report
   const familyId = auth.currentUser?.uid;
   if (!familyId) throw new Error('not logged in');
@@ -44,6 +45,7 @@ export async function createReport({ health, phone, code, ...r }: NewReport): Pr
   });
   if (health) batch.set(healthDoc(ref.id), health);
   if (phone) batch.set(contactDoc(ref.id), { phone });
+  if (photo) batch.set(photoDoc(ref.id), { photo });
   if (code) batch.set(handoverDoc(ref.id, code), {});
   await batch.commit();
   return ref.id;
@@ -93,6 +95,11 @@ export async function getReportPhone(id: string): Promise<string | null> {
   return (await getDoc(contactDoc(id))).data()?.phone ?? null;
 }
 
+// The photo, for the assigned volunteer (only after accepting) and security
+export async function getReportPhoto(id: string): Promise<string | null> {
+  return (await getDoc(photoDoc(id))).data()?.photo ?? null;
+}
+
 // The family's own handover code, to show it again after a restart (volunteers cannot read it)
 export async function getHandoverCode(id: string): Promise<string | null> {
   const snap = await getDocs(collection(db, 'reports', id, 'handover'));
@@ -113,10 +120,11 @@ export function assignReport(id: string, volunteerId: string): Promise<void> {
 export async function closeReport(id: string, closedAs: ClosedAs, handover?: string, securityPoint?: string): Promise<void> {
   const keep = closedAs === 'security';
   const batch = writeBatch(db);
-  batch.update(doc(reports, id), { status: 'closed', closedAs, closedAt: Date.now(), ...(keep ? {} : { photo: null }), ...(handover ? { handover } : {}), ...(securityPoint ? { securityPoint } : {}) });
+  batch.update(doc(reports, id), { status: 'closed', closedAs, closedAt: Date.now(), ...(handover ? { handover } : {}), ...(securityPoint ? { securityPoint } : {}) });
   if (handover) batch.delete(handoverDoc(id, handover));
   if (!keep) batch.delete(healthDoc(id));
   if (!keep) batch.delete(contactDoc(id));
+  if (!keep) batch.delete(photoDoc(id));
   batch.delete(doc(db, 'reports', id, 'seen', 'last'));
   await batch.commit();
 }
@@ -124,8 +132,9 @@ export async function closeReport(id: string, closedAs: ClosedAs, handover?: str
 // Security handed the person to the family at the security point (after checking ID): now wipe the rest
 export async function reuniteAtSecurity(id: string): Promise<void> {
   const batch = writeBatch(db);
-  batch.update(doc(reports, id), { reunitedAt: Date.now(), photo: null });
+  batch.update(doc(reports, id), { reunitedAt: Date.now() });
   batch.delete(healthDoc(id));
   batch.delete(contactDoc(id));
+  batch.delete(photoDoc(id));
   await batch.commit();
 }

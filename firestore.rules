@@ -61,10 +61,8 @@ service cloud.firestore {
         && short(request.resource.data.member, 'name', 60)
         && (request.resource.data.braceletId == ''
             || get(/databases/$(database)/documents/bracelets/$(request.resource.data.braceletId)).data.familyId == me())
-        // The photo is a small image inside the report, never a link (a link would let its owner see who opens it)
-        && (request.resource.data.photo == null
-            || (request.resource.data.photo is string && request.resource.data.photo.size() < 700000
-                && request.resource.data.photo.matches('data:image/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+')))
+        // The photo lives in private/photo, never in the report: every volunteer can read the report
+        && request.resource.data.get('photo', null) == null
         // At most 5 reports per family in 10 minutes: the same batch moves reportLimits/{family} to this time
         && getAfter(/databases/$(database)/documents/reportLimits/$(me())).data.at == request.resource.data.createdAt
         && (!exists(/databases/$(database)/documents/reportLimits/$(me()))
@@ -84,7 +82,7 @@ service cloud.firestore {
         // in /handover, which the volunteer cannot read. ponytail: 6 digits can be brute-forced by script;
         // a Cloud Function check (Blaze plan) is the better fix, see the brief section 11
         || ((isOwner() || isAssigned()) && request.resource.data.status == 'closed'
-            && changes(['status', 'closedAs', 'closedAt', 'photo', 'handover', 'securityPoint'])
+            && changes(['status', 'closedAs', 'closedAt', 'handover', 'securityPoint'])
             && request.resource.data.get('securityPoint', '') is string && request.resource.data.get('securityPoint', '').size() <= 100
             // a child's report (hasCode) closes only as 'found' with the code, or 'security' (the family is told where)
             && (isOwner() || resource.data.get('hasCode', false) != true
@@ -102,13 +100,19 @@ service cloud.firestore {
         allow delete: if signedIn() && (report().familyId == me() || report().assignedVolunteerId == me() || isSecurity());
       }
 
-      // Health and the family phone: the family, the assigned volunteer and security only
+      // Health, the family phone and the photo: the family, security, and the assigned volunteer while the case
+      // is open (after "handed to security" only security keeps them)
       match /private/{doc} {
         function report() { return get(/databases/$(database)/documents/reports/$(id)).data; }
+        function photo() { return request.resource.data.get('photo', null); }
         // created in the same batch as the report, so read the report as it will be
         allow create: if signedIn() && getAfter(/databases/$(database)/documents/reports/$(id)).data.familyId == me()
-          && short(request.resource.data, 'phone', 20) && shortHealth(request.resource.data);
-        allow read, delete: if signedIn() && (report().familyId == me() || report().assignedVolunteerId == me() || isSecurity());
+          && short(request.resource.data, 'phone', 20) && shortHealth(request.resource.data)
+          // a small image, never a link (a link would let its owner see who opens it)
+          && (photo() == null || (photo() is string && photo().size() < 700000
+              && photo().matches('data:image/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+')));
+        allow read, delete: if signedIn() && (report().familyId == me() || isSecurity()
+          || (report().assignedVolunteerId == me() && report().status != 'closed'));
       }
 
       // Last sighting for the family: area and time only (volunteer and exact location stay in /sightings)
@@ -132,9 +136,10 @@ service cloud.firestore {
       allow delete: if isVolunteer() && me() == uid;
     }
 
-    // Where a reported bracelet was heard, with the volunteer's location: volunteers and security only
+    // Where a reported bracelet was heard, with the volunteer's location: volunteers write, security reads
+    // (anyone can pick "volunteer" at login, so volunteers reading it would expose every reported person's place)
     match /sightings/{id} {
-      allow read: if isVolunteer() || isSecurity();
+      allow read: if isSecurity();
       // Only for a report that is still open, stamped with the volunteer's own id and the current time
       allow create: if isVolunteer() && request.resource.data.volunteerId == me()
         && request.resource.data.reportId is string
