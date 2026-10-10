@@ -362,10 +362,10 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 4. [x] Update the volunteer's on-duty status and location in their `volunteers` document
 5. [x] Remove the volunteer's own direction calculation; use Person 1's readings from `src/ble/`
 6. [ ] Test the whole volunteer flow with the real bracelet
-7. [ ] (added 2026-10-09) "My account" page in the volunteer app, the same as the family one: name and phone, email change, and a "change password" button. Reuse `changeEmail`, `confirmPassword`, `changePassword` from `src/firebase/profile.ts` and copy the layout from the `profile` tab in `FamilyApp.tsx`
-8. [ ] (added 2026-10-10) **Child's photo only for the volunteer who took the case.** The photo was a field of `reports/{id}`, which every volunteer can read while it is open, so anyone logged in as a volunteer could fetch every child's photo with a short script. Decided 2026-10-10: no photo before accepting, not even while `open`. Fix, done together:
+7. [x] (added 2026-10-09, done 2026-10-10 in PR #22: also language, switch role and logout) "My account" page in the volunteer app, the same as the family one: name and phone, email change, and a "change password" button. Reuse `changeEmail`, `confirmPassword`, `changePassword` from `src/firebase/profile.ts` and copy the layout from the `profile` tab in `FamilyApp.tsx`
+8. [x] (added 2026-10-10, done the same day) **Child's photo only for the volunteer who took the case.** The photo was a field of `reports/{id}`, which every volunteer can read while it is open, so anyone logged in as a volunteer could fetch every child's photo with a short script. Decided 2026-10-10: no photo before accepting, not even while `open`. Fix, done together:
    - [x] **Person 1 (backend):** photo in `reports/{id}/private/photo`, readable by the family, security and the assigned volunteer until closing. `getReportPhoto(id)` in `src/firebase/reports.ts`; closing and the cleanup delete it; the dashboard loads it. No fallback to the old field (no real reports yet)
-   - [ ] **Person 3 (screens):** the alert card shows no photo (initial and description only). After accepting (or when security assigns the case), load it with `getReportPhoto(id)` (same pattern as `getReportPhone`) and drop it when the case ends. `report.photo` from the live list is always `null` now
+   - [x] **Person 3 (screens, PR #22):** the alert card shows no photo (initial and description only). After accepting (or when security assigns the case), load it with `getReportPhoto(id)` (same pattern as `getReportPhone`) and drop it when the case ends. `report.photo` from the live list is always `null` now
    - Rules publish: Person 1 only. Merge both parts together, after the rules are published
 
 **Order:**
