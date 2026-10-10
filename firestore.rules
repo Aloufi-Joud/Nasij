@@ -32,7 +32,8 @@ service cloud.firestore {
 
     // Bracelet lock: one family per bracelet per visit
     match /bracelets/{mac} {
-      allow read: if signedIn();
+      // A family reads only its own locks (and free numbers, to claim them); security reads all
+      allow read: if isSecurity() || (signedIn() && (resource == null || resource.data.familyId == me()));
       allow create: if signedIn() && request.resource.data.familyId == me();
       allow update: if signedIn() && resource.data.familyId == me() && request.resource.data.familyId == me();
       allow delete: if signedIn() && (resource.data.familyId == me() || isSecurity());
