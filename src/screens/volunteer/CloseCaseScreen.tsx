@@ -8,33 +8,46 @@ import { Text, TextInput } from '../../components/Text';
 import { Pressable } from '../../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
 import { C, F, ui } from '../../theme';
-import type { ClosedAs, Report } from '../../mock';
+import { zones, type ClosedAs, type Report } from '../../mock';
 import ReportPhoto from './ReportPhoto';
 import { CLOSED_UI, whoLine } from './labels';
 import { latinDigits } from '../../components/digits';
 import { tr } from '../../i18n';
 
-// onConfirm resolves to 'wrong' when the rules refused the typed code
+// Pavilion or landmark next to the zone; the whole "zone · pavilion" must stay under the rules' 100 characters
+const LANDMARK_MAX = 60;
+
+// onConfirm resolves to 'wrong' when the rules refused the typed code.
+// securityPoint: handed to security, where the family picks them up ("zone · pavilion", Arabic zone name)
 type Props = {
   report: Report;
-  onConfirm: (as: ClosedAs, code?: string) => Promise<'wrong' | void>;
+  area: string; // the volunteer's current zone ('' = unknown), suggested as the security point
+  onConfirm: (as: ClosedAs, code?: string, securityPoint?: string) => Promise<'wrong' | void>;
   onCancel: () => void;
 };
 
-export default function CloseCaseScreen({ report: r, onConfirm, onCancel }: Props) {
+export default function CloseCaseScreen({ report: r, area, onConfirm, onCancel }: Props) {
   const [choice, setChoice] = useState<ClosedAs | null>(null);
   const [typed, setTyped] = useState('');
   const [wrong, setWrong] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Security point: the zone is suggested from the volunteer's location, and can be changed
+  const [zone, setZone] = useState(() => (zones.some((z) => z.name === area) ? area : ''));
+  const [landmark, setLandmark] = useState('');
+  const lost = r.type === 'lost';
   const needsCode = choice === 'found' && !!r.hasCode;
-  const ready = !!choice && (!needsCode || typed.length === 6) && !busy;
+  const atSecurity = choice === 'security';
+  // A lost child waits at the security point, so the family must know which one. An emergency or fall
+  // may have gone to an ambulance instead, so there the place is optional.
+  const needsZone = atSecurity && lost;
+  const securityPoint = atSecurity && zone ? [zone, landmark.trim()].filter(Boolean).join(' · ') : undefined;
+  const ready = !!choice && (!needsCode || typed.length === 6) && (!needsZone || !!zone) && !busy;
   const confirm = async () => {
     if (!ready) return;
     setBusy(true);
-    const result = await onConfirm(choice, needsCode ? typed : undefined).finally(() => setBusy(false));
+    const result = await onConfirm(choice, needsCode ? typed : undefined, securityPoint).finally(() => setBusy(false));
     if (result === 'wrong') setWrong(true);
   };
-  const lost = r.type === 'lost';
   const sub: Partial<Record<ClosedAs, string>> = {
     found: lost ? tr('تواصلت مع أهله وصار معهم', 'I reached the family, they’re together') : tr('وصل أهله وصار معهم', 'The family arrived, they’re together'),
     helped: tr('ساعدته وهو بخير، وما احتاج أحد يستلمه', 'I helped, they’re fine, no handover needed'),
@@ -106,9 +119,52 @@ export default function CloseCaseScreen({ report: r, onConfirm, onCancel }: Prop
         </View>
       )}
 
+      {atSecurity && (
+        <View style={[ui.card, { marginTop: 14 }]}>
+          <Text style={s.codeTitle}>{needsZone ? tr('وين نقطة الأمن؟', 'Which security point?') : tr('وين سلّمته؟ (اختياري)', 'Where did you hand them over? (optional)')}</Text>
+          <Text style={ui.muted}>
+            {lost
+              ? tr('يظهر المكان لأهله عشان يجون يستلمونه', 'The family sees this place so they can come and collect them')
+              : tr('إذا سلّمته لنقطة أمن اختر مكانها، وإذا أخذه الإسعاف اتركها فاضية', 'If you took them to a security point pick it, if an ambulance took them leave it empty')}
+          </Text>
+          <View style={s.zones}>
+            {zones.map((z) => {
+              const on = zone === z.name;
+              return (
+                <Pressable
+                  key={z.id}
+                  style={[s.zone, on && s.zoneOn]}
+                  onPress={() => setZone(on && !needsZone ? '' : z.name)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: on }}
+                >
+                  <Text style={[s.zoneText, on && s.zoneTextOn]}>{tr(z.name, z.en)}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {!!zone && (
+            <TextInput
+              style={[ui.input, { marginTop: 12 }]}
+              value={landmark}
+              // "·" separates zone and pavilion when the place is shown in English (place() in i18n)
+              onChangeText={(t) => setLandmark(t.replace(/\s*·\s*/g, ' '))}
+              maxLength={LANDMARK_MAX}
+              placeholder={tr('الجناح أو معلم قريب (اختياري)', 'Pavilion or landmark (optional)')}
+              placeholderTextColor={C.faint}
+              textAlign="right"
+            />
+          )}
+        </View>
+      )}
+
       <View style={s.privacy}>
         <Ionicons name="trash-outline" size={15} color={C.accent} />
-        <Text style={s.privacyText}>{tr('عند الإغلاق تُحذف صلاحيتك على السوار، وتُحذف بياناته الصحية وصورته من جوالك', 'On closing, your access to the bracelet ends and their health details and photo are deleted from your phone')}</Text>
+        <Text style={s.privacyText}>
+          {atSecurity
+            ? tr('عند الإغلاق تُحذف صلاحيتك على السوار وبياناته من جوالك، وتبقى صورته وحالته الصحية عند فريق الأمن فقط حتى يستلمه أهله', 'On closing, your access to the bracelet ends and their details leave your phone; security alone keeps their photo and health details until the family collects them')
+            : tr('عند الإغلاق تُحذف صلاحيتك على السوار، وتُحذف بياناته الصحية وصورته من جوالك', 'On closing, your access to the bracelet ends and their health details and photo are deleted from your phone')}
+        </Text>
       </View>
 
       <Pressable style={[ui.btn, { marginTop: 18 }, !ready && { opacity: 0.4 }]} disabled={!ready} onPress={confirm}>
@@ -139,5 +195,10 @@ const s = StyleSheet.create({
     ...ui.input, marginTop: 12, fontSize: 24, fontWeight: '700', letterSpacing: 8, fontVariant: ['tabular-nums'],
   },
   codeWrong: { color: C.danger, fontSize: 13, fontWeight: '600', textAlign: 'right', marginTop: 8 },
+  zones: { flexDirection: 'row-reverse', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  zone: { borderRadius: 12, borderWidth: 1.5, borderColor: C.border, backgroundColor: C.fill, paddingVertical: 8, paddingHorizontal: 12 },
+  zoneOn: { borderColor: C.primary, backgroundColor: C.techBg },
+  zoneText: { color: C.text, fontSize: 13.5, fontWeight: '600' },
+  zoneTextOn: { color: C.primary, fontWeight: '700' },
   cancelText: { color: C.muted, fontSize: 13.5, fontWeight: '600' },
 });

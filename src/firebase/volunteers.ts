@@ -38,11 +38,12 @@ async function write() {
 // Also sets users/{uid}.role to volunteer: the header switch lets a family login open the volunteer
 // side, and the rules check that role before showing open reports. Family access does not use the role.
 // ponytail: when roles are assigned by staff (see the "later" list), this write will be refused: remove it then.
-export async function goOnDuty(): Promise<void> {
+// name: the volunteer's name from "My account", shown on the dashboard; the email's first part until they add one
+export async function goOnDuty(name?: string): Promise<void> {
   const user = auth.currentUser;
   if (!user) throw new Error('not logged in');
   await setDoc(doc(db, 'users', user.uid), { role: 'volunteer' }, { merge: true });
-  duty = { uid: user.uid, name: user.email?.split('@')[0] || 'متطوع' };
+  duty = { uid: user.uid, name: name?.trim() || user.email?.split('@')[0] || 'متطوع' };
   lastWrite = 0;
   await write();
 }
@@ -53,6 +54,11 @@ export async function updateVolunteerLocation(p: Point): Promise<void> {
   if (!duty) return;
   if (lastWrite && Date.now() - lastWrite < WRITE_EVERY_MS) return;
   await write();
+}
+
+// The volunteer changed their name while on duty: the next location write carries it
+export function renameOnDuty(name: string) {
+  if (duty && name.trim()) duty.name = name.trim();
 }
 
 export async function goOffDuty(): Promise<void> {

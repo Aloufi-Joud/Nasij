@@ -45,7 +45,13 @@ export default function App() {
       )}
       {opened.includes('volunteer') && (
         <View style={{ flex: 1, display: role === 'volunteer' ? 'flex' : 'none' }}>
-          <VolunteerApp onSwitchRole={switchRole} />
+          <VolunteerApp
+            onSwitchRole={switchRole}
+            onLogout={() => {
+              setRole(null);
+              setOpened([]);
+            }}
+          />
         </View>
       )}
     </View>

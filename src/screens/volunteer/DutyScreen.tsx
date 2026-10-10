@@ -28,7 +28,7 @@ type Props = {
   onToggleLanguage: (l: Language) => void;
 };
 
-const TONE = {
+export const TONE = {
   safe: { color: C.safe, bg: C.safeBg, icon: 'checkmark-circle' },
   warn: { color: C.warn, bg: C.warnBg, icon: 'information-circle' },
   danger: { color: C.danger, bg: C.dangerBg, icon: 'alert-circle' },
