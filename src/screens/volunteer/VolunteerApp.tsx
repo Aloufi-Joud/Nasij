@@ -13,14 +13,17 @@ import { C, F, ui } from '../../theme';
 import { Header, HeaderButton, Pill } from '../../components/Header';
 import { BottomNav } from '../../components/BottomNav';
 import type { ClosedAs, Language, PasserbyReport, Report } from '../../mock';
+import { signOut } from 'firebase/auth';
 import { auth } from '../../firebase';
+import { loadProfile, type Profile } from '../../firebase/profile';
 import { acceptReport, closeReport, getReportHealth, getReportPhone, subscribeOpenReports } from '../../firebase/reports';
-import { areaOf, goOffDuty, goOnDuty, loadLanguages, saveLanguages, updateVolunteerLocation } from '../../firebase/volunteers';
+import { areaOf, goOffDuty, goOnDuty, loadLanguages, renameOnDuty, saveLanguages, updateVolunteerLocation } from '../../firebase/volunteers';
 import { subscribePasserbyReports } from '../../firebase/passerby';
 import { addSighting } from '../../firebase/sightings';
+import AccountScreen from './AccountScreen';
 import AlertCard from './AlertCard';
 import CloseCaseScreen from './CloseCaseScreen';
-import DutyScreen, { type Notice } from './DutyScreen';
+import DutyScreen, { TONE, type Notice } from './DutyScreen';
 import HealthScreen from './HealthScreen';
 import ProximityScreen from './ProximityScreen';
 import { CLOSED_UI, TYPE_UI, clock, since } from './labels';
@@ -28,7 +31,7 @@ import { listen, useBraceletSignal } from '../../ble/scanner';
 import { braceletMac } from '../../ble/signal';
 import { isEn, tr } from '../../i18n';
 
-type Tab = 'duty' | 'case' | 'history';
+type Tab = 'duty' | 'case' | 'history' | 'account';
 type Step = 'proximity' | 'health' | 'close';
 // What stays on the phone after closing: no photo, no description, no health data
 type Closed = { id: string; name: string; type: Report['type']; closedAs: ClosedAs | null; at: number };
@@ -39,7 +42,8 @@ const LANGUAGE_FIRST_MS = 15_000;
 
 const vibrateFor = (r: Report) => Vibration.vibrate(r.type === 'lost' ? [0, 400, 200, 400] : [0, 800, 300, 800, 300, 800]);
 
-export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => void }) {
+// onLogout: back to the login screen (App.tsx); without it the account tab has no logout row
+export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?: () => void; onLogout?: () => void }) {
   const [tab, setTab] = useState<Tab>('duty');
   const [onDuty, setOnDuty] = useState(false);
   const [dutyBusy, setDutyBusy] = useState(false); // turning duty on or off
@@ -55,8 +59,13 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
   const [locationDenied, setLocationDenied] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [languages, setLanguages] = useState<Language[]>(['ar']);
+  const [profile, setProfile] = useState<Profile>({ name: '', phone: '' }); // name and phone from "My account"
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const skipped = useRef(new Set<string>()); // reports this volunteer left for others: not shown again by itself
   const accepting = useRef<string | null>(null);
+  // A case given to this volunteer after this time came from security; one from before is this volunteer's own
+  // case coming back after the app restarted
+  const startedAt = useRef(Date.now());
 
   const uid = auth.currentUser?.uid ?? null;
 
@@ -71,6 +80,12 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
 
   useEffect(() => {
     loadLanguages().then((l) => l && setLanguages(l)).catch(() => {});
+    loadProfile()
+      .then((p) => {
+        setProfile(p);
+        setProfileLoaded(true);
+      })
+      .catch(() => {});
   }, []);
   const toggleLanguage = (l: Language) => {
     const next = languages.includes(l) ? languages.filter((x) => x !== l) : [...languages, l];
@@ -127,12 +142,33 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, onDuty, active, shownId, now, languages]);
 
-  // The shown report was taken by another volunteer or closed before this one answered
+  // The shown report was taken by another volunteer or closed before this one answered.
+  // Given to this volunteer by security: the effect below opens it.
   useEffect(() => {
     if (!shownId || accepting.current === shownId) return;
     const r = open.find((x) => x.id === shownId);
-    if (r?.status !== 'open') dropShown(shownId, r ? tr(`تولّى متطوع آخر بلاغ ${r.member.name}`, `Another volunteer took ${r.member.name}’s report`) : null);
+    if (r?.status === 'open' || (r && uid && r.assignedVolunteerId === uid)) return;
+    dropShown(shownId, r ? tr(`تولّى متطوع آخر بلاغ ${r.member.name}`, `Another volunteer took ${r.member.name}’s report`) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, shownId]);
+
+  // A case assigned to this volunteer that this phone is not following: security gave it from the dashboard,
+  // or the app restarted in the middle of this volunteer's own case. Open it like an accepted one.
+  // ponytail: a second case given while one is already open waits until the first closes
+  useEffect(() => {
+    if (!onDuty || active || !uid) return;
+    const r = open.find((x) => x.status === 'searching' && x.assignedVolunteerId === uid && accepting.current !== x.id);
+    if (!r) return;
+    const bySecurity = (r.acceptedAt ?? 0) >= startedAt.current;
+    take(
+      r,
+      bySecurity
+        ? { text: tr(`أعطاك فريق الأمن بلاغ ${r.member.name}`, `Security gave you ${r.member.name}’s report`), tone: 'warn' }
+        : { text: tr(`رجعنا لك بلاغ ${r.member.name} اللي كنت تتابعه`, `Back to ${r.member.name}’s report you were following`), tone: 'warn' },
+    );
+    vibrateFor(r);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, onDuty, active, uid]);
 
   // The case this volunteer took was closed by the family or security, or given to someone else
   useEffect(() => {
@@ -219,7 +255,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
         Vibration.cancel();
         await goOffDuty();
       } else {
-        await goOnDuty(); // sets the volunteer role first, so the open reports list is allowed
+        await goOnDuty(profile.name); // sets the volunteer role first, so the open reports list is allowed
         setOnDuty(true);
       }
     } catch {
@@ -239,17 +275,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
         dropShown(r.id, tr(`تولّى متطوع آخر بلاغ ${r.member.name}`, `Another volunteer took ${r.member.name}’s report`));
         return;
       }
-      setShownId(null);
-      Vibration.cancel();
-      setActive({ ...r, status: 'searching', assignedVolunteerId: uid, health: null, phone: null });
-      setStep(r.type === 'lost' ? 'proximity' : 'health');
-      setTab('case');
-      // Health is readable only now that this volunteer is assigned
-      setHealthLoading(true);
-      getReportHealth(r.id)
-        .then((health) => setActive((a) => (a && a.id === r.id ? { ...a, health } : a)))
-        .catch(() => {})
-        .finally(() => setHealthLoading(false));
+      take(r);
     } catch (e) {
       // permission-denied is the rules, not the internet (e.g. firestore.rules not published after a change)
       const denied = (e as { code?: string }).code === 'permission-denied';
@@ -263,6 +289,23 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
       accepting.current = null;
     }
   };
+
+  // Opens a case this volunteer now holds, after "I'm searching" or given by security (shared by both)
+  function take(r: Report, text?: Notice) {
+    if (!uid) return;
+    setShownId(null);
+    Vibration.cancel();
+    setActive({ ...r, status: 'searching', assignedVolunteerId: uid, health: null, phone: null });
+    setStep(r.type === 'lost' ? 'proximity' : 'health');
+    setTab('case');
+    setNotice(text ?? null);
+    // Health is readable only now that this volunteer is assigned
+    setHealthLoading(true);
+    getReportHealth(r.id)
+      .then((health) => setActive((a) => (a && a.id === r.id ? { ...a, health } : a)))
+      .catch(() => {})
+      .finally(() => setHealthLoading(false));
+  }
 
   // Leaves the shown report for others: it stays in the open list but does not pop up again
   function dropShown(id: string | null, text: string | null) {
@@ -289,7 +332,8 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
   // If the family or security closed it first, the rules refuse the write, which is fine.
   // Handing a child to the family: the close goes first, so a wrong code (refused by the rules) keeps the case open.
   // Any other close drops the local copy at once and sends the close in the background.
-  const closeCase = async (as: ClosedAs, code?: string): Promise<'wrong' | void> => {
+  // securityPoint: handed to security, "zone · pavilion" shown to the family
+  const closeCase = async (as: ClosedAs, code?: string, securityPoint?: string): Promise<'wrong' | void> => {
     if (!active) return;
     const { id, member } = active;
     const done = () =>
@@ -314,13 +358,26 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
       return;
     }
     done();
-    closeReport(id, as).catch((e: { code?: string }) => {
+    closeReport(id, as, undefined, securityPoint).catch((e: { code?: string }) => {
       if (e?.code !== 'permission-denied' && e?.code !== 'not-found') lostConnection();
     });
   };
 
 
-  const title = tab === 'duty' ? tr('المناوبة', 'Duty') : tab === 'case' ? tr('البلاغ', 'Report') : tr('سجلي', 'History');
+  // Logging out ends the shift first, so the location is not kept (an open case blocks it, like going off duty)
+  const logout = async () => {
+    if (active) return;
+    setOnDuty(false);
+    setOpen([]);
+    setShownId(null);
+    Vibration.cancel();
+    await goOffDuty().catch(() => {});
+    await signOut(auth).catch(() => {});
+    onLogout?.();
+  };
+
+  const title =
+    tab === 'duty' ? tr('المناوبة', 'Duty') : tab === 'case' ? tr('البلاغ', 'Report') : tab === 'history' ? tr('سجلي', 'History') : tr('حسابي', 'Account');
 
   return (
     <View style={s.screen}>
@@ -369,6 +426,14 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
               onToggleLanguage={toggleLanguage}
             />
           </>
+        )}
+
+        {/* Notices that belong to the open case (given by security, a close that didn't reach the system) */}
+        {tab === 'case' && active && notice && (
+          <Pressable style={[ui.strip, { backgroundColor: TONE[notice.tone].bg }]} onPress={() => setNotice(null)}>
+            <Ionicons name={TONE[notice.tone].icon} size={16} color={TONE[notice.tone].color} />
+            <Text style={[ui.stripText, { color: TONE[notice.tone].color }]}>{notice.text}</Text>
+          </Pressable>
         )}
 
         {/* The family's phone: the volunteer calls them directly, no handover to security needed */}
@@ -420,8 +485,25 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
               goToLabel={active.type === 'lost' ? tr('رجوع للبحث', 'Back to search') : tr('اتجه إليه', 'Go to them')}
             />
           ) : (
-            <CloseCaseScreen report={active} onConfirm={closeCase} onCancel={() => setStep('proximity')} />
+            <CloseCaseScreen report={active} area={area} onConfirm={closeCase} onCancel={() => setStep('proximity')} />
           ))}
+
+        {tab === 'account' && (
+          <AccountScreen
+            key={profileLoaded ? 'loaded' : 'loading'} // the form starts from the saved details once they arrive
+            profile={profile}
+            onSaved={(p) => {
+              setProfile(p);
+              renameOnDuty(p.name);
+            }}
+            closedCount={closed.length}
+            languageCount={languages.length}
+            onDuty={onDuty}
+            busy={!!active}
+            onSwitchRole={onSwitchRole}
+            onLogout={onLogout ? logout : undefined}
+          />
+        )}
 
         {tab === 'history' && (
           <>
@@ -455,6 +537,7 @@ export default function VolunteerApp({ onSwitchRole }: { onSwitchRole?: () => vo
           { key: 'duty', label: tr('المناوبة', 'Duty'), icon: 'radio-outline', dot: !!incoming },
           { key: 'case', label: tr('البلاغ', 'Report'), icon: 'search-outline', dot: !!active },
           { key: 'history', label: tr('سجلي', 'History'), icon: 'time-outline' },
+          { key: 'account', label: tr('حسابي', 'Account'), icon: 'person-circle-outline', dot: !profile.name },
         ]}
       />
     </View>
