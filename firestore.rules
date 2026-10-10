@@ -22,11 +22,8 @@ service cloud.firestore {
     // Members of a family (several per account), health and phone included: the family and security only
     match /members/{id} {
       allow read: if signedIn() && (resource.data.familyId == me() || isSecurity());
-      // at = when this family linked it (a real time): passer-by alerts from before it stay hidden from them
-      allow create: if signedIn() && request.resource.data.familyId == me()
-        && request.resource.data.at is int && nearNow(request.resource.data.at);
-      allow update: if signedIn() && resource.data.familyId == me() && request.resource.data.familyId == me()
-        && request.resource.data.at is int && nearNow(request.resource.data.at);
+      allow create: if signedIn() && request.resource.data.familyId == me();
+      allow update: if signedIn() && resource.data.familyId == me() && request.resource.data.familyId == me();
       allow delete: if signedIn() && resource.data.familyId == me();
     }
 
@@ -34,8 +31,11 @@ service cloud.firestore {
     match /bracelets/{mac} {
       // A family reads only its own locks (and free numbers, to claim them); security reads all
       allow read: if isSecurity() || (signedIn() && (resource == null || resource.data.familyId == me()));
-      allow create: if signedIn() && request.resource.data.familyId == me();
-      allow update: if signedIn() && resource.data.familyId == me() && request.resource.data.familyId == me();
+      // at = when this family linked it (a real time): passer-by alerts from before it stay hidden from them
+      allow create: if signedIn() && request.resource.data.familyId == me()
+        && request.resource.data.at is int && nearNow(request.resource.data.at);
+      allow update: if signedIn() && resource.data.familyId == me() && request.resource.data.familyId == me()
+        && request.resource.data.at is int && nearNow(request.resource.data.at);
       allow delete: if signedIn() && (resource.data.familyId == me() || isSecurity());
     }
 
