@@ -10,7 +10,8 @@ import type { PasserbyAlert, PasserbyReport, Point } from '../mock';
 const passerby = collection(db, 'passerbyReports');
 
 // At most PER_WINDOW reports per bracelet in WINDOW_MS (also enforced by the rules: keep both in sync)
-const WINDOW_MS = 15 * 60_000;
+// ponytail: 1 minute for testing and the demo; 15 minutes at the real event (here and 60000 in the rules)
+const WINDOW_MS = 60_000;
 const PER_WINDOW = 2;
 
 // Bracelet number as printed: 12 hex characters, upper case. null if the text is not one.

@@ -121,7 +121,7 @@ await step('a report without the sticker token is refused by the rules', async (
 });
 if (sticker) {
   const bracelet = await pb.braceletOfToken(sticker);
-  // The limit (2 per bracelet in 15 minutes) may already be used by an earlier run: then it resolves with null
+  // The limit (2 per bracelet per window) may already be used by an earlier run: then it resolves with null
   const sent = await step('passer-by with no login reports from the sticker', async () => {
     assert(bracelet, 'unknown sticker token');
     return pb.createPasserbyReport(sticker, null);
@@ -132,7 +132,7 @@ if (sticker) {
       const list = await first((ok, err) => pb.subscribePasserbyReports(bracelet, since, ok, err));
       assert(list.some((p) => p.id === sent));
     });
-  } else console.log('  - limit reached for this bracelet (2 in 15 minutes): run again later to see a report go through');
+  } else console.log('  - limit reached for this bracelet (2 per window, see WINDOW_MS in passerby.ts): run again later to see a report go through');
 } else console.log('  - no sticker token given: skipped sending a real passer-by report');
 
 console.log('OK');

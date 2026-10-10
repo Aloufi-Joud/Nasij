@@ -120,7 +120,7 @@ service cloud.firestore {
 
     // Passer-by: no login, can only drop a bracelet number (plus time and location).
     // Only from the sticker: the same batch writes passerbyClaims/{id} with the sticker's secret token.
-    // At most 2 per bracelet in 15 minutes: the same batch must move passerbyLimits/{bracelet} to this time.
+    // At most 2 per bracelet in 1 minute (15 at the real event): the same batch must move passerbyLimits/{bracelet} to this time.
     match /passerbyReports/{id} {
       allow create: if request.resource.data.keys().hasOnly(['braceletId', 'at', 'location'])
         && existsAfter(/databases/$(database)/documents/passerbyClaims/$(id))
@@ -134,7 +134,7 @@ service cloud.firestore {
     }
 
     // Passer-by count per bracelet: { start, n, at } = window start, reports in it, last report time.
-    // Written only together with a report: a new window (n = 1) after 15 minutes, or one more while n < 2.
+    // Written only together with a report: a new window (n = 1) after 1 minute, or one more while n < 2.
     // Readable by id so the page knows which of the two to write (it holds no personal data).
     match /passerbyLimits/{bracelet} {
       function next() { return request.resource.data; }
@@ -145,7 +145,7 @@ service cloud.firestore {
       allow get: if true;
       allow create: if bracelet.size() == 12 && valid() && newWindow();
       allow update: if valid() && next().at > resource.data.at
-        && ((newWindow() && next().at >= resource.data.get('start', 0) + 900000)
+        && ((newWindow() && next().at >= resource.data.get('start', 0) + 60000)
             || (next().start == resource.data.get('start', 0) && resource.data.get('n', 0) < 2
                 && next().n == resource.data.get('n', 0) + 1));
     }
