@@ -16,7 +16,7 @@ import type { ClosedAs, Language, PasserbyReport, Report } from '../../mock';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { loadProfile, type Profile } from '../../firebase/profile';
-import { acceptReport, closeReport, getReportHealth, getReportPhone, subscribeOpenReports } from '../../firebase/reports';
+import { acceptReport, closeReport, getReportHealth, getReportPhone, getReportPhoto, subscribeOpenReports } from '../../firebase/reports';
 import { areaOf, goOffDuty, goOnDuty, loadLanguages, renameOnDuty, saveLanguages, updateVolunteerLocation } from '../../firebase/volunteers';
 import { subscribePasserbyReports } from '../../firebase/passerby';
 import { addSighting } from '../../firebase/sightings';
@@ -205,6 +205,20 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
       stale = true;
     };
   }, [activeId, phoneLoaded, step]);
+
+  // Child's photo: readable only once this volunteer is assigned (accepted, or given the case by security).
+  // The live list always carries photo: null. Dropped with the case in endCase; retried on each step change.
+  const photoLoaded = !!active?.photo;
+  useEffect(() => {
+    if (!activeId || photoLoaded) return;
+    let stale = false;
+    getReportPhoto(activeId)
+      .then((photo) => !stale && photo && setActive((a) => (a && a.id === activeId ? { ...a, photo } : a)))
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [activeId, photoLoaded, step]);
 
   // Search network: while on duty, this phone reports every open report's bracelet it hears as a sighting,
   // even for cases taken by someone else. Other bracelets are ignored. addSighting keeps it to one write

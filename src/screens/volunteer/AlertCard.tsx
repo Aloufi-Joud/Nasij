@@ -1,4 +1,5 @@
-// Incoming report: child's photo and description (or an elderly emergency), "I'm searching" button
+// Incoming report: initial and description (or an elderly emergency), "I'm searching" button.
+// No photo here: report.photo is always null in the open list; the photo is loaded only after accepting.
 import { StyleSheet, View } from 'react-native';
 import { Text } from '../../components/Text';
 import { Pressable } from '../../components/Motion';
