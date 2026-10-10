@@ -46,6 +46,7 @@ for (const name of ['sightings', 'passerbyReports']) {
   const old = await db.collection(name).where('at', '<', now - KEEP_LOCATIONS_MS).get();
   for (const d of old.docs) {
     await d.ref.delete();
+    if (name === 'passerbyReports') await db.doc(`passerbyClaims/${d.id}`).delete();
     deleted++;
   }
 }

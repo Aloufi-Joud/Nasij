@@ -116,9 +116,11 @@ service cloud.firestore {
     }
 
     // Passer-by: no login, can only drop a bracelet number (plus time and location).
+    // Only from the sticker: the same batch writes passerbyClaims/{id} with the sticker's secret token.
     // At most 2 per bracelet in 15 minutes: the same batch must move passerbyLimits/{bracelet} to this time.
     match /passerbyReports/{id} {
       allow create: if request.resource.data.keys().hasOnly(['braceletId', 'at', 'location'])
+        && existsAfter(/databases/$(database)/documents/passerbyClaims/$(id))
         && request.resource.data.braceletId is string
         && request.resource.data.braceletId.size() == 12
         && request.resource.data.at is int && nearNow(request.resource.data.at)
@@ -143,6 +145,21 @@ service cloud.firestore {
         && ((newWindow() && next().at >= resource.data.get('start', 0) + 900000)
             || (next().start == resource.data.get('start', 0) && resource.data.get('n', 0) < 2
                 && next().n == resource.data.get('n', 0) + 1));
+    }
+
+    // Secret sticker token -> bracelet number. Made by scripts/tokens.mjs (admin), never by the app.
+    // Readable one by one with the token (the sticker holds it), never listed, so numbers cannot be guessed.
+    match /braceletTokens/{token} {
+      allow get: if true;
+    }
+
+    // Proof that a passer-by report came from the sticker: the token, next to the report and never readable,
+    // so volunteers and security reading reports do not learn tokens
+    match /passerbyClaims/{id} {
+      allow create: if request.resource.data.keys().hasOnly(['token'])
+        && request.resource.data.token is string
+        && get(/databases/$(database)/documents/braceletTokens/$(request.resource.data.token)).data.braceletId
+           == getAfter(/databases/$(database)/documents/passerbyReports/$(id)).data.braceletId;
     }
 
     match /zones/{id} {

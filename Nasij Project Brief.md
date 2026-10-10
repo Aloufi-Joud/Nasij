@@ -76,7 +76,7 @@ The bracelet is a **MOKO W6R** from Shenzhen Moko Technology (2 units received).
 - On iPhone the MAC is not exposed, so the app identifies the bracelet from the last 6 bytes of `EA00`, then remembers the phone-side device ID to match its `FEE0` packets
 - The alarm flag stays on for the whole 30 s alarm broadcast, so the app alerts only on a *new* event (count goes up, or flag turns on)
 
-**NFC:** the built-in chip is 13.56 MHz RFID that the iPhone cannot read. Plan: an **NTAG213** sticker on the strap holding the report page URL plus the bracelet number only (no personal data), locked with a password and rewritable per visit with NFC Tools. Quick fallback for the hackathon: a printed QR sticker. Future work: **NTAG 424 DNA**, which changes the URL on every tap so it cannot be copied.
+**NFC:** the built-in chip is 13.56 MHz RFID that the iPhone cannot read. Plan: an **NTAG213** sticker on the strap holding the report page link with the bracelet's secret token (`?t=...`, made by `scripts/tokens.mjs`; no personal data), locked with a password. The sticker stays with its bracelet across visits. Quick fallback for the hackathon: a printed QR sticker. Future work: **NTAG 424 DNA**, which changes the URL on every tap so it cannot be copied.
 
 **Range:** up to 150 m in open space per vendor; expect 10 to 30 m on a wrist in a crowd. This is why the volunteer network matters.
 
@@ -240,7 +240,7 @@ All three people build their screens first with fake data, so the whole app can 
 
 **Person 3: volunteer app** (done) **and passer-by page**
 
-- [x] Passer-by report page (`web/report/`): opened by NFC or QR with the bracelet number in the URL, one "report a case" button, confirmation screen, shows no personal data. Same colours and style as the app
+- [x] Passer-by report page (`web/report/`): opened by NFC or QR with the bracelet's secret token in the URL (since 2026-10-10; was the bracelet number), one "report a case" button, confirmation screen, shows no personal data. Same colours and style as the app
 
 - [x] On-duty mode toggle
 - [x] Alert card: child's photo and description, "I'm searching" button
@@ -300,6 +300,9 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 
 - `firestore.rules` changed: publish it again
 - Passer-by limit is now **2 reports per bracelet in 15 minutes** (was 1 per minute). `passerbyLimits/{bracelet}` is `{ start, n, at }`. `createPasserbyReport` now resolves with `null` instead of failing when the limit is reached, so the page still shows "sent" (security already has the recent reports). No change needed in `web/report/`
+- **Passer-by reports need the sticker** (same day): the sticker link is `https://<report page>/?t=<secret token>`, not the bracelet number. A report is accepted only with a known token, so nobody can send reports for guessed bracelet numbers from home. Tokens live in `braceletTokens/{token}` (made only by `scripts/tokens.mjs` with the service account; run it again for a bracelet to replace a lost or copied sticker's token). The token goes into a hidden `passerbyClaims/{reportId}` next to the report, so volunteers and security never see it. The page no longer has "type the number on the back": without a readable sticker it sends the person to a volunteer or a security point. `createPasserbyReport(token, location)` now takes the token; new `braceletOfToken(token)`. Publish the rules again
+- The report page's files were moved back into `web/report/src/` (the 2026-10-07 upload had put them one folder up, so `npm run dev` could not find them)
+- `node src/firebase/check.mjs <email> <password> [sticker token]`: with a token it also sends a real passer-by report
 - Volunteer documents carry `at` (last location write). The hourly cleanup deletes a volunteer document an hour old, so a volunteer whose app closed while on duty does not leave their location behind (PDPL)
 
 **Person 1: Bluetooth, bracelet and family app, final integration**
@@ -317,7 +320,7 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
    - [x] delete member calls the backend
    - [ ] replace the 150 m test circle with the real event boundary, kept as a constant in the code (one event, no need to store it in Firebase)
 7. [ ] Next Mac install, all native additions at once: `@react-native-async-storage/async-storage` (saved data, and Firebase Auth needs it to stay logged in), `expo-image-picker` (real photo). No push notifications
-8. [ ] NFC stickers (NTAG213) with the report page URL and bracelet number; printed QR as a fallback
+8. [ ] NFC stickers (NTAG213) with the report page link and the bracelet's secret token (`scripts/tokens.mjs` prints it); printed QR as a fallback. Needs the report page deployed first, for its address
 9. [ ] Final integration and Mac install on all three phones
 
 **Person 2: Firebase base and security dashboard (items 1 to 5 come first, everyone depends on them)**
@@ -363,7 +366,7 @@ The focus now is visible features: build the app first, then harden it step by s
 - **Fixed MAC in `EA00`:** decided 2026-10-10 to keep it. The vendor manual allows turning off the scan response and setting a per-visit Device ID, but that means reconfiguring every bracelet and replacing its NFC/QR sticker at each visit, which is not practical. Risk is small: the number carries no personal data, and a per-visit number would only stop linking one visit to the next. Pitch: future bracelets with rotating IDs
 - **Replay attack:** someone records a child's broadcast and replays it near the parent, so the app shows "near" while the child is gone. Cannot be fixed with this bracelet: per the vendor manual (V1.2) every frame it sends (Eddystone-UID, iBeacon, Alarm info) is static, with no rotating ID, encryption or secret. Needs custom firmware from MOKO or another bracelet. Pitch: future work
 - **Volunteer role assigned by staff:** today anyone can pick "volunteer" at login. The role must come from the `users` document, set by staff, and be checked in Firestore rules
-- **Spam on the passer-by page:** done (2 reports per bracelet in 15 minutes, in the rules). Many different bracelet numbers can still be sent
+- **Spam on the passer-by page:** done: a report needs the sticker's secret token, so numbers cannot be guessed from home, and 2 reports per bracelet in 15 minutes. Left: someone holding a bracelet (or a copied sticker link) can still send 2 false reports per 15 minutes for it
 - **Handover code:** checked by the rules now; a better check needs the paid plan, see below
 - **Linking code at the gate:** a code handed over with the bracelet, on top of the press check
 - **Reunion code** when a child is found, with a fallback if the parent's phone is dead (staff ID check against the gate record)
@@ -380,6 +383,6 @@ The project runs on the free Spark plan: no Cloud Functions (no code on the serv
 - **Handover code.** Now: the code is a document id the volunteer cannot read, and the rules only let them close a child's report as "found" if the typed code names that document. Gap: someone with a script can try codes one by one (6 digits = a million tries; the rules cannot count attempts). Better with Blaze: a Cloud Function checks the code and locks the case after a few wrong tries
 - **Closing reports nobody closed.** Now: GitHub Actions runs `scripts/cleanup.mjs` every hour (free), closing reports open more than 6 hours (`closedAs: 'expired'`) and deleting their health, phone, code and last-seen, plus sightings and passer-by reports older than a day. Needs the `FIREBASE_SERVICE_ACCOUNT` secret (see the 2026-10-09 notes). Gap: up to an hour late. Better with Blaze: a scheduled Cloud Function, or one that runs the moment a member is deleted
 - **Photos.** Now: a small base64 image inside the report (fine under Firestore's 1 MB per document). Better with Blaze: Storage for real photos
-- **Passer-by spam.** Now: 2 reports per bracelet in 15 minutes in the rules. Gap: someone can still send reports for many made-up bracelet numbers. Better with Blaze: App Check or a function with an IP limit
+- **Passer-by spam.** Now: a report needs the sticker's secret token, and 2 reports per bracelet in 15 minutes, both in the rules. Gap: whoever holds a sticker link can send its 2 reports every 15 minutes. Better with Blaze: App Check or a function with an IP limit
 
 Possible on the free plan, postponed until after the demo (it slows down testing): **volunteer role set by staff** (staff edit `users/{uid}.role` in the Firebase console, and the rules stop users from giving themselves `volunteer`).
