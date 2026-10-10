@@ -22,13 +22,25 @@ const toReport = (d: DocumentSnapshot): Report => ({
   ...(d.data() as Omit<Report, 'id' | 'health' | 'phone'>), id: d.id, health: null, phone: null,
 });
 
+// At most REPORTS_PER_WINDOW reports per family in REPORT_WINDOW_MS (also in the rules: keep both in sync)
+const REPORT_WINDOW_MS = 10 * 60_000;
+const REPORTS_PER_WINDOW = 5;
+
 export async function createReport({ health, phone, code, ...r }: NewReport): Promise<string> {
+  // familyId: the rules let only this family follow and close its report
+  const familyId = auth.currentUser?.uid;
+  if (!familyId) throw new Error('not logged in');
+  const createdAt = Date.now();
+  // The limit document reportLimits/{family} = { start, n, at } moves in the same batch as the report
+  const limitRef = doc(db, 'reportLimits', familyId);
+  const old = (await getDoc(limitRef)).data() as { start: number; n: number } | undefined;
+  const fresh = !old || createdAt >= old.start + REPORT_WINDOW_MS;
+  if (!fresh && old.n >= REPORTS_PER_WINDOW) throw new Error('too many reports');
   const ref = doc(reports);
   const batch = writeBatch(db);
-  // familyId: the rules let only this family follow and close its report
-  const familyId = auth.currentUser?.uid ?? null;
+  batch.set(limitRef, fresh ? { start: createdAt, n: 1, at: createdAt } : { start: old.start, n: old.n + 1, at: createdAt });
   batch.set(ref, {
-    ...r, familyId, createdAt: Date.now(), status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null, hasCode: !!code,
+    ...r, familyId, createdAt, status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null, hasCode: !!code,
   });
   if (health) batch.set(healthDoc(ref.id), health);
   if (phone) batch.set(contactDoc(ref.id), { phone });

@@ -60,6 +60,14 @@ await step("a report with someone else's bracelet is refused", () =>
     }),
   ),
 );
+await step('a report whose photo is a link is refused', () =>
+  assert.rejects(() =>
+    r.createReport({
+      type: 'lost', braceletId: 'TEST00000000', member: { name: 'x', kind: 'child', age: 5 },
+      photo: 'https://example.com/x.jpg', description: 'check.mjs', health: null, area: 'test', location: null,
+    }),
+  ),
+);
 const id = await step('family creates a report', () =>
   r.createReport({
     type: 'lost', braceletId: 'TEST00000000', member: { name: 'اختبار', kind: 'child', age: 5 },

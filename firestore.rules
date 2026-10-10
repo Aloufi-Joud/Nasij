@@ -50,7 +50,15 @@ service cloud.firestore {
         && request.resource.data.status == 'open'
         && request.resource.data.assignedVolunteerId == null
         && (request.resource.data.braceletId == ''
-            || get(/databases/$(database)/documents/bracelets/$(request.resource.data.braceletId)).data.familyId == me());
+            || get(/databases/$(database)/documents/bracelets/$(request.resource.data.braceletId)).data.familyId == me())
+        // The photo is a small image inside the report, never a link (a link would let its owner see who opens it)
+        && (request.resource.data.photo == null
+            || (request.resource.data.photo is string && request.resource.data.photo.size() < 700000
+                && request.resource.data.photo.matches('data:image/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+')))
+        // At most 5 reports per family in 10 minutes: the same batch moves reportLimits/{family} to this time
+        && getAfter(/databases/$(database)/documents/reportLimits/$(me())).data.at == request.resource.data.createdAt
+        && (!exists(/databases/$(database)/documents/reportLimits/$(me()))
+            || get(/databases/$(database)/documents/reportLimits/$(me())).data.at != request.resource.data.createdAt);
       // Volunteers see open cases (the report holds no health); security sees all
       allow read: if signedIn() && (isOwner() || isSecurity() || (isVolunteer() && resource.data.status != 'closed'));
       allow update: if signedIn() && (
@@ -176,6 +184,20 @@ service cloud.firestore {
       allow update: if owner() && changes(['answer', 'answeredAt'])
         && request.resource.data.answer in ['with-me', 'lost']
         && request.resource.data.answeredAt is int && nearNow(request.resource.data.answeredAt);
+    }
+
+    // Report count per family: { start, n, at } like passerbyLimits, 5 per 10 minutes. Only the family itself
+    match /reportLimits/{uid} {
+      function next() { return request.resource.data; }
+      function newWindow() { return next().n == 1 && next().start == next().at; }
+      function valid() {
+        return signedIn() && me() == uid && next().keys().hasOnly(['start', 'n', 'at']) && next().at is int && nearNow(next().at);
+      }
+      allow get: if signedIn() && me() == uid;
+      allow create: if valid() && newWindow();
+      allow update: if valid() && next().at > resource.data.at
+        && ((newWindow() && next().at >= resource.data.start + 600000)
+            || (next().start == resource.data.start && resource.data.n < 5 && next().n == resource.data.n + 1));
     }
 
     // Secret sticker token -> bracelet number. Made by scripts/tokens.mjs (admin), never by the app.
