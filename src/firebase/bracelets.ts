@@ -13,6 +13,8 @@ export function claimBracelet(mac: string): Promise<boolean> {
     const snap = await tx.get(braceletDoc(mac));
     if (snap.exists() && snap.data().familyId !== familyId) return false;
     tx.set(braceletDoc(mac), { familyId, at: Date.now() });
+    // A passer-by alert from an earlier visit is not this family's to see
+    tx.delete(doc(db, 'passerbyAlerts', mac.toUpperCase()));
     return true;
   });
 }

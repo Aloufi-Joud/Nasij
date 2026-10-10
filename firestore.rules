@@ -22,8 +22,11 @@ service cloud.firestore {
     // Members of a family (several per account), health and phone included: the family and security only
     match /members/{id} {
       allow read: if signedIn() && (resource.data.familyId == me() || isSecurity());
-      allow create: if signedIn() && request.resource.data.familyId == me();
-      allow update: if signedIn() && resource.data.familyId == me() && request.resource.data.familyId == me();
+      // at = when this family linked it (a real time): passer-by alerts from before it stay hidden from them
+      allow create: if signedIn() && request.resource.data.familyId == me()
+        && request.resource.data.at is int && nearNow(request.resource.data.at);
+      allow update: if signedIn() && resource.data.familyId == me() && request.resource.data.familyId == me()
+        && request.resource.data.at is int && nearNow(request.resource.data.at);
       allow delete: if signedIn() && resource.data.familyId == me();
     }
 
@@ -150,7 +153,11 @@ service cloud.firestore {
     // Latest passer-by report per bracelet, for its family to answer "are they with you?".
     // Written only as a copy of a fresh report in the same batch; the family adds the answer.
     match /passerbyAlerts/{bracelet} {
-      function owner() { return signedIn() && get(/databases/$(database)/documents/bracelets/$(bracelet)).data.familyId == me(); }
+      // The family holding the bracelet now, for alerts sent since they linked it (not an earlier visit's)
+      function owner() {
+        let lock = get(/databases/$(database)/documents/bracelets/$(bracelet)).data;
+        return signedIn() && lock.familyId == me() && (resource == null || resource.data.at >= lock.at);
+      }
       function report() { return getAfter(/databases/$(database)/documents/passerbyReports/$(request.resource.data.reportId)).data; }
       allow get: if isSecurity() || owner();
       allow list: if isSecurity();
@@ -159,6 +166,8 @@ service cloud.firestore {
         && request.resource.data.at is int && nearNow(request.resource.data.at)
         && report().braceletId == bracelet && report().at == request.resource.data.at
         && report().location == request.resource.data.location;
+      // Linking a bracelet clears an earlier visit's alert, in the same transaction as the lock
+      allow delete: if signedIn() && getAfter(/databases/$(database)/documents/bracelets/$(bracelet)).data.familyId == me();
       allow update: if owner() && changes(['answer', 'answeredAt'])
         && request.resource.data.answer in ['with-me', 'lost']
         && request.resource.data.answeredAt is int && nearNow(request.resource.data.answeredAt);
