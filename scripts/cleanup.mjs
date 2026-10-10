@@ -1,13 +1,17 @@
 // Free stand-in for a scheduled Cloud Function (the Spark plan has none): GitHub Actions runs this every hour.
 // Closes reports left open longer than MAX_OPEN_MS (the family never came back to close them) and deletes
 // what only the search needed: health, phone, handover code, last-seen and the photo. Also deletes sightings
-// and passer-by reports older than a day, since they hold locations.
+// and passer-by reports older than a day, since they hold locations. Cases handed to security get the same
+// wipe after MAX_OPEN_MS if security never marked them as handed to the family.
 // Needs the FIREBASE_SERVICE_ACCOUNT secret (see the brief, section 11). Run by .github/workflows/cleanup.yml.
 import { cert, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
 const MAX_OPEN_MS = 6 * 60 * 60 * 1000;
 const KEEP_LOCATIONS_MS = 24 * 60 * 60 * 1000;
+// ponytail: a volunteer who stands still writes no location, so one still for an hour drops off the dashboard
+// until they move; a heartbeat write would fix it, at the cost of free-plan writes
+const VOLUNTEER_STALE_MS = 60 * 60 * 1000;
 
 initializeApp({ credential: cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)) });
 const db = getFirestore();
@@ -25,13 +29,34 @@ for (const report of open.docs) {
   closed++;
 }
 
+// Handed to security but never marked as handed to the family: wipe what security kept for the handover
+const atDesk = await db.collection('reports').where('closedAs', '==', 'security').get();
+for (const report of atDesk.docs) {
+  const r = report.data();
+  if (r.reunitedAt || r.closedAt > now - MAX_OPEN_MS) continue;
+  const batch = db.batch();
+  batch.update(report.ref, { reunitedAt: now, photo: null });
+  for (const d of (await report.ref.collection('private').get()).docs) batch.delete(d.ref);
+  await batch.commit();
+  closed++;
+}
+
 let deleted = 0;
-for (const name of ['sightings', 'passerbyReports']) {
+for (const name of ['sightings', 'passerbyReports', 'passerbyAlerts']) {
   const old = await db.collection(name).where('at', '<', now - KEEP_LOCATIONS_MS).get();
   for (const d of old.docs) {
     await d.ref.delete();
+    if (name === 'passerbyReports') await db.doc(`passerbyClaims/${d.id}`).delete();
     deleted++;
   }
 }
 
-console.log(`closed ${closed} old reports, deleted ${deleted} old sightings and passer-by reports`);
+// Volunteers whose app was closed while on duty: their location must not stay (PDPL)
+let gone = 0;
+for (const v of (await db.collection('volunteers').get()).docs) {
+  if ((v.data().at ?? 0) >= now - VOLUNTEER_STALE_MS) continue;
+  await v.ref.delete();
+  gone++;
+}
+
+console.log(`closed ${closed} old reports, deleted ${deleted} old sightings and passer-by reports, ${gone} stale volunteers`);

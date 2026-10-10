@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../../../src/firebase';
 import { assignReport, getReportHealth, getReportPhone, reuniteAtSecurity, subscribeOpenReports } from '../../../src/firebase/reports';
-import { zones, members as mockMembers, reports as mockReports, volunteers as mockVolunteers, passerbyReports as mockPasserby, type Member, type PasserbyReport, type Point, type Report, type Sighting, type Volunteer, type Zone } from '../../../src/mock';
+import { zones, members as mockMembers, reports as mockReports, volunteers as mockVolunteers, passerbyReports as mockPasserby, type Member, type PasserbyAlert, type PasserbyReport, type Point, type Report, type Sighting, type Volunteer, type Zone } from '../../../src/mock';
 import { metresBetween } from '../../../src/components/geo';
 
 // Drawn Expo 2030 site, shared with MapView (approximation of the published masterplan, not survey data)
@@ -82,7 +82,7 @@ function useMock() {
     healthOf: async (id: string) => [...reports, ...closed].find((r) => r.id === id)?.health ?? null,
     phoneOf: async () => '0500000000',
   };
-  return { reports, closed, sightings, volunteers: mockVolunteers.filter((x) => x.onDuty), passerby: mockPasserby, events, memberOf, ...actions };
+  return { reports, closed, sightings, volunteers: mockVolunteers.filter((x) => x.onDuty), passerby: mockPasserby, alerts: [] as (PasserbyAlert & { id: string })[], events, memberOf, ...actions };
 }
 
 export const useLive = DEMO ? useMock : useFirestore;
@@ -94,6 +94,8 @@ function useFirestore() {
   const volunteers = useCollection<Volunteer>('volunteers', where('onDuty', '==', true));
   const sightings = useCollection<Sighting>('sightings', where('at', '>=', since));
   const passerby = useCollection<PasserbyReport>('passerbyReports', where('at', '>=', since));
+  // The family's answer to the latest passer-by report of each bracelet (id = bracelet number)
+  const alerts = useCollection<PasserbyAlert & { id: string }>('passerbyAlerts');
   // Cases closed today, for the timeline and "found in" time. A range on closedAt skips open reports (null)
   const closed = useCollection<Report>('reports', where('closedAt', '>=', since)).sort((a, b) => b.closedAt! - a.closedAt!);
   // Bracelet number → family (from the server-side lock) → that family's member wearing it.
@@ -123,7 +125,7 @@ function useFirestore() {
   ].sort((a, b) => b.at - a.at).slice(0, 30);
 
   return {
-    reports, closed, sightings, volunteers, passerby, events, memberOf,
+    reports, closed, sightings, volunteers, passerby, alerts, events, memberOf,
     assign: assignReport, reunite: reuniteAtSecurity, healthOf: getReportHealth, phoneOf: getReportPhone,
   };
 }

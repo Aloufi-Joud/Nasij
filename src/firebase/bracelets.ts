@@ -11,8 +11,10 @@ export function claimBracelet(mac: string): Promise<boolean> {
   if (!familyId) return Promise.reject(new Error('not logged in'));
   return runTransaction(db, async (tx) => {
     const snap = await tx.get(braceletDoc(mac));
-    if (snap.exists() && snap.data().familyId !== familyId) return false;
+    if (snap.exists()) return snap.data().familyId === familyId; // already ours: keep the lock and its alert as they are
     tx.set(braceletDoc(mac), { familyId, at: Date.now() });
+    // A passer-by alert from an earlier visit is not this family's to see
+    tx.delete(doc(db, 'passerbyAlerts', mac.toUpperCase()));
     return true;
   });
 }

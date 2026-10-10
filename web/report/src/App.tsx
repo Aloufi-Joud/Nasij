@@ -1,9 +1,11 @@
-// Passer-by report page (Person 3). Opened by the NFC sticker or the QR on the bracelet strap:
-//   https://<page>/?b=785005002D12   (the bracelet number; #785005002D12 works too)
+// Passer-by report page. Opened by the NFC sticker or the QR on the bracelet strap:
+//   https://<page>/?t=<secret token>   (made by scripts/tokens.mjs; #<token> works too)
+// The token is the proof that the passer-by holds the bracelet: the rules refuse reports without it, so
+// nobody can report bracelets by guessing their printed numbers from home.
 // No login, and it shows no personal data: it only sends the bracelet number, the time and,
 // if the passer-by allows it, their location. Security matches the number to the member.
-import { useState } from 'react';
-import { braceletNumber, createPasserbyReport } from '../../../src/firebase/passerby';
+import { useEffect, useState } from 'react';
+import { braceletOfToken, createPasserbyReport } from '../../../src/firebase/passerby';
 import type { Point } from '../../../src/mock';
 
 // slow: no answer yet. Firestore keeps the write and sends it when the network comes back,
@@ -13,9 +15,9 @@ type Stage = 'ready' | 'sending' | 'slow' | 'sent' | 'failed';
 const AMBULANCE = '997';
 const SLOW_AFTER_MS = 12_000;
 
-function numberFromUrl() {
+function tokenFromUrl() {
   const url = new URL(window.location.href);
-  return braceletNumber(url.searchParams.get('b') ?? url.hash.slice(1));
+  return url.searchParams.get('t') ?? url.hash.slice(1);
 }
 
 // The passer-by's location, or null if they refuse or it takes too long: the report goes either way
@@ -31,12 +33,17 @@ function whereAmI(): Promise<Point | null> {
 }
 
 export default function App() {
-  const [bracelet, setBracelet] = useState(numberFromUrl);
-  const [typed, setTyped] = useState('');
+  const [token] = useState(tokenFromUrl);
+  // undefined: still checking the sticker, null: unknown sticker
+  const [bracelet, setBracelet] = useState<string | null | undefined>(undefined);
   const [stage, setStage] = useState<Stage>('ready');
   const [withLocation, setWithLocation] = useState(true);
 
   const busy = stage === 'sending' || stage === 'slow';
+
+  useEffect(() => {
+    braceletOfToken(token).then(setBracelet, () => setBracelet(null));
+  }, [token]);
 
   const send = async () => {
     if (!bracelet || busy) return;
@@ -44,7 +51,7 @@ export default function App() {
     const slow = setTimeout(() => setStage((s) => (s === 'sending' ? 'slow' : s)), SLOW_AFTER_MS);
     try {
       const location = withLocation ? await whereAmI() : null;
-      await createPasserbyReport(bracelet, location);
+      await createPasserbyReport(token, location);
       setStage('sent');
     } catch {
       setStage('failed');
@@ -52,8 +59,6 @@ export default function App() {
       clearTimeout(slow);
     }
   };
-
-  const typedNumber = braceletNumber(typed);
 
   return (
     <main className="page">
@@ -78,27 +83,18 @@ export default function App() {
             اتصل بالإسعاف {AMBULANCE}
           </a>
         </section>
+      ) : bracelet === undefined ? (
+        <section className="card" aria-busy="true">
+          <p className="muted">جارٍ قراءة الملصق…</p>
+        </section>
       ) : !bracelet ? (
         <section className="card">
-          <h1>رقم السوار غير واضح</h1>
-          <p>اكتب الرقم المطبوع على ظهر السوار، تحت رمز الاستجابة السريعة. يتكون من ١٢ حرفًا ورقمًا.</p>
-          <label className="field">
-            <span>رقم السوار</span>
-            <input
-              dir="ltr"
-              inputMode="text"
-              autoCapitalize="characters"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="785005002D12"
-              value={typed}
-              onChange={(e) => setTyped(e.target.value)}
-            />
-          </label>
-          <button className="btn" disabled={!typedNumber} onClick={() => setBracelet(typedNumber)}>
-            متابعة
-          </button>
-          <p className="muted after">إذا لم تجد الرقم، اتجه لأقرب نقطة أمن أو اتصل بالإسعاف {AMBULANCE}</p>
+          <h1>تعذّرت قراءة الملصق</h1>
+          <p>جرّب تقريب الجوال من الملصق مرة ثانية، أو امسح رمز الاستجابة السريعة على السوار.</p>
+          <p>إذا لم ينجح، ابقَ مع الشخص واطلب من أقرب متطوع أو اتجه لأقرب نقطة أمن.</p>
+          <a className="btn danger" href={`tel:${AMBULANCE}`}>
+            اتصل بالإسعاف {AMBULANCE}
+          </a>
         </section>
       ) : (
         <section className="card">

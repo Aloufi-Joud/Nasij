@@ -9,7 +9,7 @@ import { State, type Device } from 'react-native-ble-plx';
 import MapView, { Circle, Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { C, ui } from '../../theme';
-import { MAX_AGE, zones, type Gender, type Kind, type Language, type Member, type Point, type Report, type ReportType } from '../../mock';
+import { MAX_AGE, zones, type Gender, type Kind, type Language, type Member, type PasserbyAlert, type Point, type Report, type ReportType } from '../../mock';
 import { metresBetween } from '../../components/geo';
 import { PAIR_RSSI, newPairing, pairStep, type Pairing } from '../../ble/pairing';
 import { listen, onBluetoothState } from '../../ble/scanner';
@@ -27,6 +27,7 @@ import { deleteMember, loadMembers, saveMember } from '../../firebase/members';
 import { changeEmail, changePassword, confirmPassword, loadProfile, saveProfile, type Profile } from '../../firebase/profile';
 import { closeReport, createReport, getHandoverCode, loadMyOpenReports, subscribeReport } from '../../firebase/reports';
 import { subscribeLastSeen, type LastSeen } from '../../firebase/sightings';
+import { answerPasserbyAlert, subscribePasserbyAlert } from '../../firebase/passerby';
 import { areaOf } from '../../firebase/volunteers';
 import FoundScreen from './FoundScreen';
 import LostScreen from './LostScreen';
@@ -103,6 +104,9 @@ const ZONE_UI: Record<LogKind, { label: string; color: string }> = {
   FAR: { get label() { return tr('بعيد عنك', 'Far from you'); }, color: C.danger },
   LOST: { get label() { return tr('انقطعت الإشارة', 'Signal lost'); }, color: C.danger },
 };
+// A passer-by report older than this no longer asks the family (it may be from an earlier visit)
+const ALERT_FRESH_MS = 15 * 60_000;
+
 const failed = (title: string) => Alert.alert(title, tr('تأكد من الاتصال بالإنترنت وحاول مرة ثانية.', 'Check your internet connection and try again.'));
 
 const TREND_UI: Record<Trend, string> = {
@@ -238,6 +242,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
   const [seen, setSeen] = useState<Record<string, LastSeen | null>>({});
   const [screen, setScreen] = useState<Screen>(null);
   const [lostAsk, setLostAsk] = useState<string | null>(null); // child whose signal was just lost: ask to report
+  const [alerts, setAlerts] = useState<Record<string, PasserbyAlert | null>>({}); // latest passer-by report per bracelet
   const [justFound, setJustFound] = useState<{ name: string; as: Report['closedAs']; took: number; point: string | null; big: boolean } | null>(null);
   const [linkFor, setLinkFor] = useState<string | null>(null); // member whose link panel is open
   const [typedMac, setTypedMac] = useState('');
@@ -619,6 +624,21 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
     return () => [...stops, ...seenStops].forEach((stop) => stop());
   }, [openIds]);
 
+  // A passer-by scanned one of our bracelets' stickers: ask the family whether the person is with them
+  const macs = members.map((m) => m.mac).filter(Boolean).join(',');
+  useEffect(() => {
+    if (!macs) return;
+    const stops = macs.split(',').map((mac) =>
+      subscribePasserbyAlert(mac, (a) => {
+        setAlerts((o) => ({ ...o, [mac]: a }));
+        if (a && !a.answer && Date.now() - a.at < ALERT_FRESH_MS) Vibration.vibrate([0, 400, 200, 400]);
+      }),
+    );
+    return () => stops.forEach((stop) => stop());
+  }, [macs]);
+  const answerAlert = (mac: string, answer: 'with-me' | 'lost') =>
+    answerPasserbyAlert(mac, answer).catch(() => failed(tr('تعذر إرسال ردك', 'Couldn’t send your answer')));
+
   // Volunteers near the bracelet pick it up from Firestore
   const sendReport = async (m: FamMember, type: ReportType, description: string, photo: string | null) => {
     // Handover code for children only: an elder can say who their family is
@@ -757,6 +777,13 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
   const openCount = Object.keys(reports).length;
   const screenMember = screen && members.find((m) => m.id === screen.memberId);
   const askMember = members.find((m) => m.id === lostAsk && !reports[m.id] && liveOf(m)?.zone === 'LOST');
+  // Unanswered, recent, and no open report for them yet (then volunteers already have it)
+  const foundMember = members.find((m) => {
+    const a = m.mac ? alerts[m.mac] : null;
+    return a && !a.answer && now - a.at < ALERT_FRESH_MS && !reports[m.id];
+  });
+  const foundAlert = foundMember?.mac ? alerts[foundMember.mac] : null;
+  const foundArea = foundAlert ? areaOf(foundAlert.location) : '';
   const draftError = formError(draft);
 
   const renderMap = (height: number) => (
@@ -1230,8 +1257,43 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
         </Modal>
       )}
 
+      {/* A passer-by scanned the bracelet's sticker: is the person with you? Their answer shows on the security dashboard */}
+      {shown && foundMember && foundAlert && (
+        <Modal visible animationType="fade" onRequestClose={() => answerAlert(foundMember.mac!, 'with-me')}>
+          <View style={s.ask}>
+            <FadeIn pop style={s.sosIcon}>
+              <Ionicons name="hand-left-outline" size={30} color={C.danger} />
+            </FadeIn>
+            <FadeIn delay={50}>
+              <Text style={s.sosTitle}>{tr(`شخص أبلغ عن ${foundMember.name}`, `Someone reported ${foundMember.name}`)}</Text>
+            </FadeIn>
+            <FadeIn delay={90}>
+              <Text style={s.askText}>
+                {foundArea
+                  ? tr(`أحد مسح سوار ${foundMember.name} في ${place(foundArea)}. هو معك؟`, `Someone scanned ${foundMember.name}’s bracelet in ${place(foundArea)}. Are they with you?`)
+                  : tr(`أحد مسح سوار ${foundMember.name}. هو معك؟`, `Someone scanned ${foundMember.name}’s bracelet. Are they with you?`)}
+              </Text>
+            </FadeIn>
+            <FadeIn delay={130} style={s.askBtns}>
+              <Pressable
+                style={[s.sosBtn, s.askBtn]}
+                onPress={() => {
+                  answerAlert(foundMember.mac!, 'lost');
+                  setScreen({ kind: 'lost', memberId: foundMember.id });
+                }}
+              >
+                <Text style={s.sosBtnText}>{tr(`${foundMember.name} ضائع، أبلّغ`, `${foundMember.name} is lost, report`)}</Text>
+              </Pressable>
+              <Pressable style={[s.sosBtn, s.sosBtnGhost, s.askBtn]} onPress={() => answerAlert(foundMember.mac!, 'with-me')}>
+                <Text style={[s.sosBtnText, { color: '#fff' }]}>{tr('لا، معي', 'No, they’re with me')}</Text>
+              </Pressable>
+            </FadeIn>
+          </View>
+        </Modal>
+      )}
+
       {/* Signal lost for 10 s: ask full screen whether the child is lost. Goes away by itself if the signal comes back */}
-      {shown && askMember && (
+      {shown && askMember && !foundMember && (
         <Modal visible animationType="fade" onRequestClose={() => setLostAsk(null)}>
           <View style={s.ask}>
             {/* Urgent: a tighter stagger than the green one, so the buttons are there within a quarter second */}

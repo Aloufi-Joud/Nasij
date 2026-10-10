@@ -1,5 +1,5 @@
 // Live check of the Firebase functions against the real database, no phone needed.
-// Run: node src/firebase/check.mjs <test email> <password>
+// Run: node src/firebase/check.mjs <test email> <password> [sticker token from scripts/tokens.mjs]
 // The email gets an account on first run, like the app login. Prints OK, or the step that failed.
 // Add a few lines here when you write a new function (sightings, passer-by).
 import assert from 'node:assert';
@@ -19,7 +19,7 @@ registerHooks({
   },
 });
 
-const [email, password] = process.argv.slice(2);
+const [email, password, sticker] = process.argv.slice(2);
 if (!email || !password) {
   console.log('Run: node src/firebase/check.mjs <test email> <password>');
   process.exit(1);
@@ -104,21 +104,36 @@ await step('off duty deletes the volunteer document', async () => {
 });
 
 const since = Date.now() - 1000;
-await step('passer-by with no login reports a bracelet', async () => {
+await step('a made-up sticker is refused', async () => {
   await signOut(auth);
-  await pb.createPasserbyReport('78:50:05:00:2d:12', null);
+  await assert.rejects(() => pb.createPasserbyReport('MadeUpStickerToken0000', null));
 });
-await step('a bad bracelet number is refused', () =>
-  assert.rejects(() => pb.createPasserbyReport('12345', null)),
-);
 await step('no login: a passer-by cannot read reports', () =>
   assert.rejects(() => first((ok, err) => pb.subscribePasserbyReports('785005002D12', since, ok, err))),
 );
-await step('volunteer sees the passer-by report', async () => {
-  await signInWithEmailAndPassword(auth, email, password);
-  const list = await first((ok, err) => pb.subscribePasserbyReports('785005002D12', since, ok, err));
-  assert(list.length >= 1);
+await step('a report without the sticker token is refused by the rules', async () => {
+  const { collection, writeBatch } = await import('firebase/firestore');
+  const at = Date.now();
+  const batch = writeBatch(db);
+  batch.set(doc(collection(db, 'passerbyReports')), { braceletId: '785005002D12', at, location: null });
+  batch.set(doc(db, 'passerbyLimits', '785005002D12'), { start: at, n: 1, at });
+  await assert.rejects(() => batch.commit());
 });
+if (sticker) {
+  const bracelet = await pb.braceletOfToken(sticker);
+  // The limit (2 per bracelet per window) may already be used by an earlier run: then it resolves with null
+  const sent = await step('passer-by with no login reports from the sticker', async () => {
+    assert(bracelet, 'unknown sticker token');
+    return pb.createPasserbyReport(sticker, null);
+  });
+  if (sent) {
+    await step('volunteer sees the passer-by report', async () => {
+      await signInWithEmailAndPassword(auth, email, password);
+      const list = await first((ok, err) => pb.subscribePasserbyReports(bracelet, since, ok, err));
+      assert(list.some((p) => p.id === sent));
+    });
+  } else console.log('  - limit reached for this bracelet (2 per window, see WINDOW_MS in passerby.ts): run again later to see a report go through');
+} else console.log('  - no sticker token given: skipped sending a real passer-by report');
 
 console.log('OK');
 process.exit(0);
