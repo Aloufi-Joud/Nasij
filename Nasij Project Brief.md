@@ -76,7 +76,7 @@ The bracelet is a **MOKO W6R** from Shenzhen Moko Technology (2 units received).
 - On iPhone the MAC is not exposed, so the app identifies the bracelet from the last 6 bytes of `EA00`, then remembers the phone-side device ID to match its `FEE0` packets
 - The alarm flag stays on for the whole 30 s alarm broadcast, so the app alerts only on a *new* event (count goes up, or flag turns on)
 
-**NFC:** the built-in chip is 13.56 MHz RFID that the iPhone cannot read. Plan: an **NTAG213** sticker on the strap holding the report page link with the bracelet's secret token (`?t=...`, made by `scripts/tokens.mjs`; no personal data), locked with a password. The sticker stays with its bracelet across visits. Quick fallback for the hackathon: a printed QR sticker. Future work: **NTAG 424 DNA**, which changes the URL on every tap so it cannot be copied.
+**NFC:** the built-in chip is 13.56 MHz RFID that the iPhone cannot read (checked 2026-10-10: NFC Tools on the iPhone reads nothing from it). Plan: an **NTAG213** sticker on the strap holding the report page link with the bracelet's secret token (`?t=...`, made by `scripts/tokens.mjs`; no personal data), locked with a password. The sticker stays with its bracelet across visits. Quick fallback for the hackathon: a printed QR sticker. Future work: **NTAG 424 DNA**, which changes the URL on every tap so it cannot be copied.
 
 **Range:** up to 150 m in open space per vendor; expect 10 to 30 m on a wrist in a crowd. This is why the volunteer network matters.
 
