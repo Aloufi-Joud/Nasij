@@ -50,6 +50,7 @@ export default function LostScreen(p: {
         <TextInput
           style={[s.input, s.multi]}
           value={description}
+          maxLength={300}
           onChangeText={setDescription}
           placeholder={tr('مثلًا: فستان أصفر وحذاء أبيض، شعرها مربوط', 'e.g. yellow dress, white shoes, hair tied up')}
           placeholderTextColor={C.faint}

@@ -849,6 +849,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
         <TextInput
           style={s.input}
           value={draft.name}
+          maxLength={60}
           onChangeText={(name) => setDraft({ ...draft, name })}
           placeholder={tr('مثلًا: سنا', 'e.g. Sana')}
           placeholderTextColor={C.faint}
@@ -880,6 +881,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
         <TextInput
           style={s.input}
           value={draft.phone}
+          maxLength={20}
           onChangeText={(phone) => setDraft({ ...draft, phone: latinDigits(phone).slice(0, 15) })}
           placeholder="05XXXXXXXX"
           placeholderTextColor={C.faint}
@@ -892,6 +894,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
         <TextInput
           style={[s.input, { minHeight: 70 }]}
           value={draft.description}
+          maxLength={300}
           onChangeText={(description) => setDraft({ ...draft, description })}
           placeholder={tr('مثلًا: ثوب أبيض وشماغ أحمر، يمشي بعكاز', 'e.g. white thobe, red shemagh, walks with a cane')}
           placeholderTextColor={C.faint}
@@ -904,6 +907,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
         <TextInput
           style={s.input}
           value={draft.condition}
+          maxLength={100}
           onChangeText={(condition) => setDraft({ ...draft, condition })}
           placeholder={tr('مثلًا: ربو، سكري', 'e.g. asthma, diabetes')}
           placeholderTextColor={C.faint}
@@ -915,6 +919,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
             <TextInput
               style={[s.input, { minHeight: 70 }]}
               value={draft.notes}
+              maxLength={300}
               onChangeText={(notes) => setDraft({ ...draft, notes })}
               placeholder={tr('مثلًا: البخاخ في الجيب الأمامي لشنطته', 'e.g. inhaler in the front pocket of their bag')}
               placeholderTextColor={C.faint}
@@ -1504,6 +1509,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
                 <TextInput
                   style={s.input}
                   value={profileDraft.name}
+                  maxLength={60}
                   onChangeText={(name) => {
                     setProfileDraft({ ...profileDraft, name });
                     setProfileSaved(false);
@@ -1517,6 +1523,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
                 <TextInput
                   style={s.input}
                   value={profileDraft.phone}
+                  maxLength={20}
                   onChangeText={(phone) => {
                     setProfileDraft({ ...profileDraft, phone: latinDigits(phone).slice(0, 15) });
                     setProfileSaved(false);
