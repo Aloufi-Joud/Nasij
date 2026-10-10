@@ -63,6 +63,9 @@ for (const v of (await db.collection('volunteers').get()).docs) {
 
 let freed = 0;
 for (const b of (await db.collection('bracelets').where('at', '<', now - BRACELET_LOCK_MS).get()).docs) {
+  // The member who wore it shows no bracelet either, so the family app does not treat it as still theirs
+  const wearers = await db.collection('members').where('familyId', '==', b.data().familyId).where('braceletId', '==', b.id).get();
+  for (const m of wearers.docs) await m.ref.update({ braceletId: null });
   await b.ref.delete();
   freed++;
 }
