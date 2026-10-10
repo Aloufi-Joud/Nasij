@@ -42,7 +42,7 @@ for (const report of atDesk.docs) {
 }
 
 let deleted = 0;
-for (const name of ['sightings', 'passerbyReports']) {
+for (const name of ['sightings', 'passerbyReports', 'passerbyAlerts']) {
   const old = await db.collection(name).where('at', '<', now - KEEP_LOCATIONS_MS).get();
   for (const d of old.docs) {
     await d.ref.delete();

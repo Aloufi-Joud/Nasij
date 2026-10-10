@@ -147,6 +147,23 @@ service cloud.firestore {
                 && next().n == resource.data.get('n', 0) + 1));
     }
 
+    // Latest passer-by report per bracelet, for its family to answer "are they with you?".
+    // Written only as a copy of a fresh report in the same batch; the family adds the answer.
+    match /passerbyAlerts/{bracelet} {
+      function owner() { return signedIn() && get(/databases/$(database)/documents/bracelets/$(bracelet)).data.familyId == me(); }
+      function report() { return getAfter(/databases/$(database)/documents/passerbyReports/$(request.resource.data.reportId)).data; }
+      allow get: if isSecurity() || owner();
+      allow list: if isSecurity();
+      allow create, update: if request.resource.data.keys().hasOnly(['at', 'location', 'reportId'])
+        && request.resource.data.reportId is string
+        && request.resource.data.at is int && nearNow(request.resource.data.at)
+        && report().braceletId == bracelet && report().at == request.resource.data.at
+        && report().location == request.resource.data.location;
+      allow update: if owner() && changes(['answer', 'answeredAt'])
+        && request.resource.data.answer in ['with-me', 'lost']
+        && request.resource.data.answeredAt is int && nearNow(request.resource.data.answeredAt);
+    }
+
     // Secret sticker token -> bracelet number. Made by scripts/tokens.mjs (admin), never by the app.
     // Readable one by one with the token (the sticker holds it), never listed, so numbers cannot be guessed.
     match /braceletTokens/{token} {

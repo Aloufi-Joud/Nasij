@@ -3,9 +3,9 @@
 // sticker (scripts/tokens.mjs): without it the rules refuse the report, so bracelet numbers cannot be guessed
 // from home. The report itself holds exactly three fields, braceletId (12 characters), at and location.
 // No imports from src/ble here: the web page cannot load the Bluetooth library.
-import { collection, doc, getDoc, onSnapshot, query, where, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDoc, onSnapshot, query, updateDoc, where, writeBatch } from 'firebase/firestore';
 import { db } from './index';
-import type { PasserbyReport, Point } from '../mock';
+import type { PasserbyAlert, PasserbyReport, Point } from '../mock';
 
 const passerby = collection(db, 'passerbyReports');
 
@@ -40,6 +40,8 @@ export async function createPasserbyReport(token: string, location: Point | null
   const batch = writeBatch(db);
   batch.set(ref, r);
   batch.set(doc(db, 'passerbyClaims', ref.id), { token });
+  // The bracelet's family is asked "are they with you?" (a fresh alert also clears the last answer)
+  batch.set(doc(db, 'passerbyAlerts', id), { at: r.at, location, reportId: ref.id });
   batch.set(limitRef, fresh ? { start: r.at, n: 1, at: r.at } : { start: old!.start, n: (old!.n ?? 0) + 1, at: r.at });
   await batch.commit();
   return ref.id;
@@ -64,4 +66,18 @@ export function subscribePasserbyReports(
       ),
     onError,
   );
+}
+
+// The latest passer-by report for a bracelet, for its family (the rules let only that family and security read it)
+export function subscribePasserbyAlert(braceletId: string, onChange: (alert: PasserbyAlert | null) => void): () => void {
+  return onSnapshot(
+    doc(db, 'passerbyAlerts', braceletId.toUpperCase()),
+    (snap) => onChange(snap.exists() ? (snap.data() as PasserbyAlert) : null),
+    () => onChange(null),
+  );
+}
+
+// The family's answer: 'with-me' tells security it was a mistake or a prank, 'lost' that the person is really lost
+export async function answerPasserbyAlert(braceletId: string, answer: 'with-me' | 'lost'): Promise<void> {
+  await updateDoc(doc(db, 'passerbyAlerts', braceletId.toUpperCase()), { answer, answeredAt: Date.now() });
 }

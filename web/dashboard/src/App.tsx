@@ -314,12 +314,16 @@ export default function App() {
                 {live.passerby.map((p) => {
                   const member = live.memberOf(p.braceletId);
                   const report = open.find((r) => r.braceletId === p.braceletId);
+                  // The family's answer, if it came after this report
+                  const alert = live.alerts.find((a) => a.id === p.braceletId.toUpperCase() && (a.answeredAt ?? 0) >= p.at);
                   const label = (
                     <>
                       <strong>{member ? member.name : 'سوار غير مربوط'}</strong>
                       <span className="muted">
-                        {zoneOf(p.location)?.name ?? 'موقع غير معروف'}، {since(p.at, now)}
+                        {zoneOf(p.location)?.name ?? (p.location ? 'خارج موقع الفعالية' : 'موقع غير معروف')}، {since(p.at, now)}
                       </span>
+                      {alert?.answer === 'with-me' && <span className="muted">الأهل: معهم، غالبًا بلاغ خاطئ</span>}
+                      {alert?.answer === 'lost' && <strong style={{ color: "var(--danger)" }}>الأهل: ضائع فعلًا</strong>}
                     </>
                   );
                   return (

@@ -93,6 +93,16 @@ export type PasserbyReport = {
   location: Point | null; // from the browser, if the passer-by allows it
 };
 
+// passerbyAlerts/{braceletId}: the latest passer-by report for a bracelet, so its family can say whether
+// the person is with them. Read by that family and security only
+export type PasserbyAlert = {
+  at: number;
+  location: Point | null;
+  reportId: string;
+  answer?: 'with-me' | 'lost';
+  answeredAt?: number;
+};
+
 // An area of the event, for the security dashboard.
 // Coordinates sit on the Expo 2030 Riyadh site (approx., between KAPSARC and King Khalid airport)
 export type Zone = {
