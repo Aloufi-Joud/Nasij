@@ -99,7 +99,10 @@ service cloud.firestore {
     // Each volunteer writes their own on-duty status and location
     match /volunteers/{uid} {
       allow read: if isSecurity() || (signedIn() && me() == uid);
-      allow write: if isVolunteer() && me() == uid;
+      // at = time of this write (the hourly cleanup deletes documents an hour old, so it must be the real time)
+      allow create, update: if isVolunteer() && me() == uid
+        && request.resource.data.at is int && nearNow(request.resource.data.at);
+      allow delete: if isVolunteer() && me() == uid;
     }
 
     // Where a reported bracelet was heard, with the volunteer's location: volunteers and security only
