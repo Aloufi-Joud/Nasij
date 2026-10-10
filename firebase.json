@@ -1,8 +1,16 @@
 {
-  "hosting": {
-    "public": "web/report/dist",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"]
-  },
+  "hosting": [
+    {
+      "site": "nasij-0",
+      "public": "web/report/dist",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"]
+    },
+    {
+      "site": "nasij-0-dashboard",
+      "public": "web/dashboard/dist",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"]
+    }
+  ],
   "firestore": {
     "rules": "firestore.rules"
   }
