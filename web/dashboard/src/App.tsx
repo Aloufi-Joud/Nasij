@@ -383,15 +383,18 @@ function Detail({ r, now, live, free, onClose }: DetailProps) {
   const { volunteers, passerby, sightings } = live;
   const volunteer = volunteers.find((v) => v.id === r.assignedVolunteerId);
   const seenBy = passerby.filter((p) => p.braceletId.toUpperCase() === r.braceletId.toUpperCase()).sort((a, b) => a.at - b.at);
-  // Health and the family phone sit in their own documents (reports/{id}/private/...); security may read them.
+  // Health, the family phone and the photo sit in their own documents (reports/{id}/private/...); security may read them.
   // They exist while the case is open, or while the person waits at the security point
   const holds = !r.closedAt || atDesk(r);
   const [health, setHealth] = useState<Health | null>(null);
   const [phone, setPhone] = useState<string | null>(null);
+  const [photo, setPhoto] = useState<string | null>(null);
   useEffect(() => {
+    setPhoto(null);
     if (!holds) return;
     live.healthOf(r.id).then(setHealth, () => {});
     live.phoneOf(r.id).then(setPhone, () => {});
+    live.photoOf(r.id).then(setPhoto, () => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [r.id, holds]);
   const [error, setError] = useState('');
@@ -413,8 +416,8 @@ function Detail({ r, now, live, free, onClose }: DetailProps) {
         </button>
       </div>
       <div className="who">
-        {r.photo ? (
-          <img src={r.photo} alt={`صورة ${r.member.name}`} width={88} height={88} />
+        {photo ? (
+          <img src={photo} alt={`صورة ${r.member.name}`} width={88} height={88} />
         ) : (
           <div className="no-photo" aria-hidden="true">
             {r.member.name[0]}

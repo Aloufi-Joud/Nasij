@@ -46,7 +46,7 @@ export type Report = {
   type: ReportType;
   braceletId: string; // per-visit bracelet number (MAC), the only thing the bracelet broadcasts
   member: { name: string; kind: Kind; age: number; gender?: Gender; language?: Language };
-  photo: string | null; // small data URI stored inside the report (Spark plan has no Storage)
+  photo: string | null; // small data URI (Spark plan has no Storage), in reports/{id}/private/photo: null in listed reports
   description: string; // clothing and looks, written by the parent
   health: Health | null; // shown only to the assigned volunteer, deleted on close
   phone: string | null; // family phone, same privacy as health
