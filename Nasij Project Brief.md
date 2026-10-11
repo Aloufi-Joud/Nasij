@@ -97,7 +97,7 @@ The bracelet is a **MOKO W6R** from Shenzhen Moko Technology (2 units received).
 
 - Development is on **Windows**. iPhone installs need a **Mac** with a free Apple ID, and each install expires after **7 days**
 - After install, daily work runs from Windows: `npx expo start` (same Wi-Fi) or `npx expo start --tunnel`
-- **No new native libraries** between Mac installs. Pure JavaScript packages are fine. Native additions are batched for the next Mac install: planned are persistent storage (`@react-native-async-storage/async-storage`) and `expo-image-picker`. Push notifications are dropped (free signing may reject the push entitlement)
+- **No new native libraries** between Mac installs. Pure JavaScript packages are fine. Native additions are batched for the next Mac install: planned is persistent storage (`@react-native-async-storage/async-storage`). `expo-image-picker` was added on 2026-10-11 (child photo in the lost report, falls back to the demo photo on builds without it), so the next Mac install must rebuild. Push notifications are dropped (free signing may reject the push entitlement)
 - Firebase Spark plan has **no Cloud Functions and no Storage**: deletion on case close happens inside the app's close function, and the child's photo is stored small inside the report document
 - Navigation is simple state-based tabs (no `react-navigation`, which needs native modules)
 - Use the Command Prompt on Windows, not PowerShell (script policy blocks `npx`)
@@ -344,7 +344,7 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 1. [x] Firebase project on the free Spark plan; enable Firestore and Auth with **email and password**
 2. [x] Collections with the same shape as `mock.ts`: `members`, `reports`, `volunteers`, `sightings`, `passerbyReports`, `zones`, plus `users` (role: family, volunteer or security) and `bracelets` (who linked it this visit)
 3. [x] Health data in a separate private document, e.g. `reports/{id}/private/health`. Firestore rules work per document and cannot hide one field, so this is the only way to show health to the assigned volunteer only. The family phone and handover code use the same way: `private/contact`
-4. [x] Security rules (`firestore.rules`, published, checked with 50 allow/deny cases on the emulator):
+4. [x] Security rules (`firestore.rules`, published, checked with 61 allow/deny cases on the emulator: `scripts/rules.test.mjs`, run with `npx firebase-tools emulators:exec --project demo-nasij --only firestore "node --test scripts/rules.test.mjs"`; added 2026-10-11, rerun after every rules change):
    - a family reads and writes only its own members
    - an on-duty volunteer reads open reports, without health (the rules check the volunteer role; on-duty is not checked yet)
    - only the assigned volunteer reads the health document

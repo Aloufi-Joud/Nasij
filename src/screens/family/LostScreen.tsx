@@ -1,6 +1,6 @@
 // "My child is lost": clothing description and photo, then send to nearby volunteers
 import { useState } from 'react';
-import { Image, StyleSheet, View } from 'react-native';
+import { Alert, Image, StyleSheet, View } from 'react-native';
 import { Text, TextInput } from '../../components/Text';
 import { Pressable } from '../../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,8 +10,27 @@ import { Banner } from '../../components/Banner';
 import { Button } from '../../components/Button';
 import { tr } from '../../i18n';
 
-// ponytail: fake photo until expo-image-picker joins the next Mac install
+// Builds installed before expo-image-picker have no native module: fall back to the demo photo there
 const FAKE_PHOTO = reports[0].photo;
+let ImagePicker: typeof import('expo-image-picker') | null = null;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+try { ImagePicker = require('expo-image-picker'); } catch {}
+
+// Same cap as firestore.rules for private/photo (the photo is stored inside the document)
+const MAX_PHOTO = 700_000;
+
+async function pickPhoto(): Promise<string | null> {
+  if (!ImagePicker) return FAKE_PHOTO;
+  const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, quality: 0.2, base64: true });
+  const b64 = res.canceled ? null : res.assets[0].base64;
+  if (!b64) return null;
+  const uri = `data:image/jpeg;base64,${b64}`;
+  if (uri.length >= MAX_PHOTO) {
+    Alert.alert(tr('الصورة كبيرة', 'Photo too large'), tr('قصّي الصورة على وجه الطفل وجربي مرة ثانية', "Crop the photo to the child's face and try again"));
+    return null;
+  }
+  return uri;
+}
 
 export default function LostScreen(p: {
   name: string;
@@ -34,7 +53,7 @@ export default function LostScreen(p: {
 
       <View style={ui.card}>
         <Text style={s.label}>{tr('صورة حديثة', 'Recent photo')}</Text>
-        <Pressable style={s.photoBox} onPress={() => setPhoto(photo ? null : FAKE_PHOTO)}>
+        <Pressable style={s.photoBox} onPress={async () => setPhoto(photo ? null : await pickPhoto())}>
           {photo ? (
             <Image source={{ uri: photo }} style={s.photo} />
           ) : (
