@@ -1297,7 +1297,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
         </Modal>
       )}
 
-      {/* Signal lost for 10 s: ask full screen whether the child is lost. Goes away by itself if the signal comes back */}
+      {/* Signal lost for 20 s: ask full screen whether the child is lost. Goes away by itself if the signal comes back */}
       {shown && askMember && !foundMember && (
         <Modal visible animationType="fade" onRequestClose={() => setLostAsk(null)}>
           <View style={s.ask}>
