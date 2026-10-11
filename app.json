@@ -22,6 +22,14 @@
         }
       ],
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "نسيج يستخدم صورك عشان ترفق صورة حديثة لطفلك في البلاغ",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      [
         "expo-font",
         {
           "android": {

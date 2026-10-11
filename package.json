@@ -9,6 +9,7 @@
     "expo": "~57.0.26",
     "expo-dev-client": "~57.0.19",
     "expo-font": "~57.0.4",
+    "expo-image-picker": "~57.0.20",
     "expo-location": "~57.0.20",
     "expo-status-bar": "~57.0.1",
     "firebase": "^12.19.0",
@@ -20,6 +21,7 @@
     "react-native-web": "^0.21.2"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@types/react": "~19.2.2",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~57.0.2",
@@ -30,7 +32,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "test:rules": "npx firebase-tools emulators:exec --project demo-nasij --only firestore \"node --test scripts/rules.test.mjs\""
   },
   "private": true
 }
