@@ -2,7 +2,7 @@
 // Same logic as the tested laptop scanner (nasij_scanner.py). No native imports, so it runs in node checks.
 import type { Device } from 'react-native-ble-plx';
 
-export const LOST_AFTER_MS = 10000; // no packet for 10 s = signal lost
+export const LOST_AFTER_MS = 20000; // no packet for 20 s = signal lost (the bracelet calls slowly; 10 s gave false alarms with it beside the phone)
 export const WINDOW = 6; // average the last 6 readings
 
 export type Trend = 'approaching' | 'away' | 'steady';
