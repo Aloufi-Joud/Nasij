@@ -26,6 +26,7 @@ import CloseCaseScreen from './CloseCaseScreen';
 import DutyScreen, { TONE, type Notice } from './DutyScreen';
 import HealthScreen from './HealthScreen';
 import ProximityScreen from './ProximityScreen';
+import PasserbyModal from './PasserbyModal';
 import { CLOSED_UI, TYPE_UI, clock, since } from './labels';
 import { listen, useBraceletSignal } from '../../ble/scanner';
 import { braceletMac } from '../../ble/signal';
@@ -55,6 +56,7 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
   const [closed, setClosed] = useState<Closed[]>([]);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [passerby, setPasserby] = useState<PasserbyReport[]>([]);
+  const [passerbyShown, setPasserbyShown] = useState<PasserbyReport | null>(null); // the box over the screen
   const [area, setArea] = useState('');
   const [locationDenied, setLocationDenied] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -249,9 +251,13 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
   }, [active?.id]);
   const seenPasserby = useRef(0);
   useEffect(() => {
-    if (passerby.length > seenPasserby.current) Vibration.vibrate([0, 300, 150, 300]);
+    // A new passer-by report: vibrate and open the box with its point on the map, whatever tab is open
+    if (passerby.length > seenPasserby.current) {
+      Vibration.vibrate([0, 300, 150, 300, 150, 300]);
+      setPasserbyShown(passerby[0]);
+    }
     seenPasserby.current = passerby.length;
-  }, [passerby.length]);
+  }, [passerby]);
 
   const incoming = open.find((r) => r.id === shownId) ?? null;
   const waiting = open.filter((r) => r.status === 'open');
@@ -336,6 +342,7 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
     setClosed((old) => [{ id: active.id, name: active.member.name, type: active.type, closedAs: as, at: Date.now() }, ...old]);
     setActive(null);
     setPasserby([]);
+    setPasserbyShown(null);
     setHealthLoading(false);
     setStep('proximity');
     setTab('duty');
@@ -461,16 +468,12 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
         {tab === 'case' && active && latestPasserby && (
           <Pressable
             style={[ui.strip, { backgroundColor: C.safeBg }]}
-            disabled={!latestPasserby.location}
-            onPress={() =>
-              latestPasserby.location &&
-              Linking.openURL(`https://maps.apple.com/?ll=${latestPasserby.location.latitude},${latestPasserby.location.longitude}`)
-            }
+            onPress={() => setPasserbyShown(latestPasserby)}
           >
             <Ionicons name="hand-left-outline" size={16} color={C.safe} />
             <Text style={[ui.stripText, { color: C.safe }]}>
               {tr(`مارّ أبلغ عن سوار ${active.member.name} ${since(latestPasserby.at, now)}`, `A passer-by reported ${active.member.name}’s bracelet ${since(latestPasserby.at, now)}`)}
-              {latestPasserby.location ? tr('، اضغط لفتح موقعه', ', tap to open their location') : ''}
+              {latestPasserby.location ? tr('، اضغط لرؤية مكانه على الخريطة', ', tap to see the place on the map') : ''}
             </Text>
           </Pressable>
         )}
@@ -543,6 +546,8 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
         )}
         </FadeIn>
       </ScrollView>
+
+      {active && <PasserbyModal report={active} passerby={passerbyShown} now={now} onClose={() => setPasserbyShown(null)} />}
 
       <BottomNav
         active={tab}

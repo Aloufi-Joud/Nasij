@@ -104,7 +104,8 @@ export default function CloseCaseScreen({ report: r, area, onConfirm, onCancel }
             )}
           </Text>
           <TextInput
-            style={[s.codeInput, wrong && { borderColor: C.danger }]}
+            // Spaced digits only once typed: letter spacing breaks the joined Arabic letters of the placeholder
+            style={[s.codeInput, !typed && { letterSpacing: 0, fontSize: 17 }, wrong && { borderColor: C.danger }]}
             value={typed}
             onChangeText={(t) => {
               setTyped(latinDigits(t).slice(0, 6));
