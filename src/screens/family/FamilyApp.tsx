@@ -1,7 +1,7 @@
 // Nasij family app: several members, one bracelet each. Measures each signal and alerts when one moves away.
 // Same logic as the tested laptop scanner (nasij_scanner.py)
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Modal, ScrollView, StyleSheet, Vibration, View } from 'react-native';
+import { Alert, Image, Modal, ScrollView, StyleSheet, Vibration, View } from 'react-native';
 import { Text, TextInput } from '../../components/Text';
 import { FadeIn, Pressable } from '../../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,7 +14,9 @@ import { metresBetween } from '../../components/geo';
 import { PAIR_RSSI, newPairing, pairStep, type Pairing } from '../../ble/pairing';
 import { listen, onBluetoothState } from '../../ble/scanner';
 import { LOST_AFTER_MS, WINDOW, braceletMac, cleanMac, parseAlarm, summarize, type Signal, type Trend } from '../../ble/signal';
+import { ActionSheet } from '../../components/ActionSheet';
 import { Banner } from '../../components/Banner';
+import { PhotoField, pickPhoto } from '../../components/PhotoField';
 import { BottomNav } from '../../components/BottomNav';
 import { Button } from '../../components/Button';
 import { Header, HeaderButton, Pill, type IconName } from '../../components/Header';
@@ -55,10 +57,11 @@ type AlertKind = 'SOS' | 'FALL';
 type Form = {
   name: string; kind: Kind; gender: Gender; age: string; language: Language;
   phone: string; description: string; condition: string; notes: string;
+  photo: string | null; // today's clothes: on this phone only (never in members/), sent with a report
 };
 type FamMember = Form & { id: string; mac: string | null };
 const EMPTY: Form = {
-  name: '', kind: 'child', gender: 'male', age: '', language: 'ar', phone: '', description: '', condition: '', notes: '',
+  name: '', kind: 'child', gender: 'male', age: '', language: 'ar', phone: '', description: '', condition: '', notes: '', photo: null,
 };
 const KIND_UI: Record<Kind, { label: string; color: string }> = {
   child: { get label() { return tr('طفل', 'Child'); }, color: C.child },
@@ -73,7 +76,7 @@ const GENDER_UI: Record<Gender, string> = {
 const fromDoc = (m: Member): FamMember => ({
   id: m.id, name: m.name, kind: m.kind, gender: m.gender ?? 'male', age: m.age ? String(m.age) : '',
   language: m.language ?? 'ar', phone: m.phone ?? '', description: m.description ?? '',
-  condition: m.health?.condition ?? '', notes: m.health?.notes ?? '', mac: m.braceletId,
+  condition: m.health?.condition ?? '', notes: m.health?.notes ?? '', photo: null, mac: m.braceletId,
 });
 const toDoc = (m: Form & { id?: string; mac: string | null }) => ({
   id: m.id, name: m.name, kind: m.kind, gender: m.gender, age: Number(m.age) || 0, language: m.language,
@@ -245,6 +248,10 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
   const [alerts, setAlerts] = useState<Record<string, PasserbyAlert | null>>({}); // latest passer-by report per bracelet
   const [justFound, setJustFound] = useState<{ name: string; as: Report['closedAs']; took: number; point: string | null; big: boolean } | null>(null);
   const [linkFor, setLinkFor] = useState<string | null>(null); // member whose link panel is open
+  const [infoFor, setInfoFor] = useState<string | null>(null); // member whose bracelet info is shown
+  // The ••• sheet: the member is kept while it closes, so its title doesn't go blank mid-fade
+  const [menuMember, setMenuMember] = useState<FamMember | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [typedMac, setTypedMac] = useState('');
   const [live, setLive] = useState<Record<string, Live>>({});
   const [now, setNow] = useState(() => Date.now());
@@ -537,6 +544,26 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
       return m.id;
     });
 
+  // Optional, but recommended once for a new child: a photo in today's clothes helps a volunteer most
+  const recommendPhoto = (id: string, name: string) => {
+    const add = async (camera: boolean) => {
+      const photo = await pickPhoto(camera);
+      if (photo) setMembers((list) => list.map((x) => (x.id === id ? { ...x, photo } : x)));
+    };
+    Alert.alert(
+      tr(`ننصح بتصوير ${name}`, `We recommend a photo of ${name}`),
+      tr(
+        'صورة بملابسه اليوم تساعد المتطوع يتعرف عليه بسرعة لو ضاع. تبقى في جوالك بس، وما تنرسل إلا مع البلاغ',
+        'A photo in today’s clothes helps a volunteer recognise them fast if they get lost. It stays on your phone and is only sent with a report',
+      ),
+      [
+        { text: tr('تخطي', 'Skip'), style: 'cancel' },
+        { text: tr('من الألبوم', 'From gallery'), onPress: () => add(false) },
+        { text: tr('التقط صورة', 'Take a photo'), onPress: () => add(true) },
+      ],
+    );
+  };
+
   const saveDraft = async () => {
     if (formError(draft) || saving) return;
     const f = { ...draft, name: draft.name.trim(), description: draft.description.trim(), condition: draft.condition.trim(), notes: draft.notes.trim() };
@@ -553,6 +580,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
         setMembers((list) => [...list, { ...f, id, mac: null }]);
         setEditing(null);
         setLinkFor(id); // next step: link a bracelet to the new member
+        if (f.kind === 'child' && !f.photo) recommendPhoto(id, f.name);
       }
     } catch {
       failed(tr('تعذر حفظ البيانات', 'Couldn’t save'));
@@ -588,16 +616,16 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
     return Promise.allSettled([releaseBracelet(mac), save(free), r && closeReport(r.id, 'found')]);
   };
   const askUnlink = (m: FamMember) =>
-    reports[m.id]
-      ? Alert.alert(
-          tr('فك السوار؟', 'Unlink the bracelet?'),
-          tr(`بينقفل بلاغ ${m.name} المفتوح، لأن المتطوعين يدورون بهالسوار.`, `${m.name}'s open report will be closed, because volunteers search by this bracelet.`),
-          [
-            { text: tr('إلغاء', 'Cancel'), style: 'cancel' },
-            { text: tr('فك السوار', 'Unlink'), style: 'destructive', onPress: () => unlink(m) },
-          ],
-        )
-      : unlink(m);
+    Alert.alert(
+      tr('فك السوار؟', 'Unlink the bracelet?'),
+      reports[m.id]
+        ? tr(`بينقفل بلاغ ${m.name} المفتوح، لأن المتطوعين يدورون بهالسوار.`, `${m.name}'s open report will be closed, because volunteers search by this bracelet.`)
+        : tr(`ما راح تقدر تتابع ${m.name} حتى تربط سوار من جديد.`, `You won’t be able to follow ${m.name} until you link a bracelet again.`),
+      [
+        { text: tr('إلغاء', 'Cancel'), style: 'cancel' },
+        { text: tr('فك السوار', 'Unlink'), style: 'destructive', onPress: () => unlink(m) },
+      ],
+    );
 
   // Follow the open reports live: a volunteer takes one, or closes it
   const openIds = Object.entries(reports)
@@ -680,7 +708,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
   useEffect(() => {
     autoReport.current = (type, mac) => {
       const m = members.find((x) => x.mac === mac);
-      if (m && !reports[m.id]) sendReport(m, type, m.description, null);
+      if (m && !reports[m.id]) sendReport(m, type, m.description, m.photo);
     };
   });
 
@@ -903,6 +931,10 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
           textAlignVertical="top"
         />
 
+        <Text style={s.label}>{tr('صورة بملابسه اليوم (اختياري، ننصح فيها)', 'Photo in today’s clothes (optional, recommended)')}</Text>
+        <PhotoField value={draft.photo} onChange={(photo) => setDraft({ ...draft, photo })} />
+        <Text style={s.hint}>{tr('تبقى في جوالك بس، وما تنرسل إلا مع البلاغ للمتطوع اللي يستلمه', 'Stays on your phone, only sent with a report to the volunteer who takes it')}</Text>
+
         <Text style={s.label}>{tr('حالة صحية (اختياري)', 'Health condition (optional)')}</Text>
         <TextInput
           style={s.input}
@@ -1017,10 +1049,12 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
   };
 
   const formOpen = !screen && tab === 'home' && !!editing;
+  const [mapSeen, setMapSeen] = useState(false);
+  if (tab === 'map' && !mapSeen) setMapSeen(true);
   // A new page starts at the top, wherever the list was scrolled to
   useEffect(() => {
     scrollRef.current?.scrollTo({ y: 0, animated: false });
-  }, [formOpen]);
+  }, [formOpen, tab, screen?.kind]);
 
   const renderMember = (m: FamMember) => {
     const l = liveOf(m);
@@ -1033,7 +1067,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
     const edge = !!l?.edge;
     const warn = zone === 'MEDIUM' || zone === 'FAR' || lost || edge;
     const report = reports[m.id];
-    const role = [KIND_UI[m.kind].label, GENDER_UI[m.gender], m.age && tr(`${m.age} سنة`, `${m.age} yrs`), langName(m.language)].filter(Boolean).join(' · ');
+    const role = [KIND_UI[m.kind].label, m.age && tr(`${m.age} سنة`, `${m.age} yrs`), langName(m.language)].filter(Boolean).join(' · ');
 
     return (
       <View key={m.id} style={[ui.card, { marginBottom: 14 }, warn && { borderColor: lost || zone === 'FAR' || edge ? C.dangerBorder : C.warnBorder }]}>
@@ -1043,24 +1077,34 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
 
         <View style={s.memberRow}>
           <View style={[s.avatar, { backgroundColor: KIND_UI[m.kind].color }]}>
-            <Text style={s.avatarText}>{m.name[0]}</Text>
+            {m.photo ? <Image source={{ uri: m.photo }} style={s.avatarPhoto} /> : <Text style={s.avatarText}>{m.name[0]}</Text>}
           </View>
           <View style={{ flex: 1 }}>
             <View style={s.nameRow}>
               <Text style={s.memberName}>{m.name}</Text>
-              <View style={s.bars}>
-                {[1, 2, 3, 4].map((i) => (
-                  <View
-                    key={i}
-                    style={[
-                      s.bar,
-                      {
-                        height: 4 + i * 4,
-                        backgroundColor: i <= strength ? (strength <= 1 ? C.danger : strength <= 2 ? C.warn : C.accent) : C.barOff,
-                      },
-                    ]}
-                  />
-                ))}
+              <View style={s.nameTools}>
+                <View style={s.bars}>
+                  {[1, 2, 3, 4].map((i) => (
+                    <View
+                      key={i}
+                      style={[
+                        s.bar,
+                        {
+                          height: 4 + i * 4,
+                          backgroundColor: i <= strength ? (strength <= 1 ? C.danger : strength <= 2 ? C.warn : C.accent) : C.barOff,
+                        },
+                      ]}
+                    />
+                  ))}
+                </View>
+                {m.mac && (
+                  <Pressable hitSlop={12} onPress={() => setInfoFor(infoFor === m.id ? null : m.id)} accessibilityRole="button" accessibilityLabel={tr('معلومات السوار', 'Bracelet info')}>
+                    <Ionicons name={infoFor === m.id ? 'information-circle' : 'information-circle-outline'} size={22} color={C.accent} />
+                  </Pressable>
+                )}
+                <Pressable style={s.more} hitSlop={10} onPress={() => { setMenuMember(m); setMenuOpen(true); }} accessibilityRole="button" accessibilityLabel={tr('خيارات', 'Options')}>
+                  <Ionicons name="ellipsis-horizontal" size={18} color={C.accent} />
+                </Pressable>
               </View>
             </View>
             <Text style={s.memberRole}>{role}</Text>
@@ -1095,7 +1139,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
 
         {/* Lost child: report it, or close the open report */}
         {m.kind === 'child' && !report && (
-          <Button label={tr(`${m.name} ضائع`, `${m.name} is lost`)} icon="search" kind="danger" onPress={() => setScreen({ kind: 'lost', memberId: m.id })} style={{ marginTop: 14 }} />
+          <Button label={tr(`أبلّغ عن ضياع ${m.name}`, `Report ${m.name} missing`)} icon="megaphone-outline" kind="soft" onPress={() => setScreen({ kind: 'lost', memberId: m.id })} style={{ marginTop: 14 }} />
         )}
         {report && (
           <View style={{ marginTop: 14 }}>
@@ -1133,8 +1177,8 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
 
         {!m.mac && linkFor === m.id && renderLink(m)}
 
-        {/* Technical details for the demo */}
-        {m.mac && (
+        {/* Bracelet details, behind the ⓘ next to the signal bars */}
+        {m.mac && infoFor === m.id && (
           <View style={s.techCard}>
             <Text style={s.techText}>{tr(`رقم السوار: ${m.mac}`, `Bracelet: ${m.mac}`)}</Text>
             {reading && (
@@ -1144,37 +1188,6 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
             )}
           </View>
         )}
-
-        <View style={s.memberActions}>
-          <Pressable
-            style={s.smallBtn}
-            hitSlop={6}
-            onPress={() => {
-              setDraft(m);
-              setEditing(m.id);
-            }}
-          >
-            <Ionicons name="create-outline" size={15} color={C.accent} />
-            <Text style={[s.smallBtnText, { color: C.accent }]}>{tr('تعديل', 'Edit')}</Text>
-          </Pressable>
-          {m.mac ? (
-            <Pressable style={s.smallBtn} hitSlop={6} onPress={() => askUnlink(m)}>
-              <Ionicons name="unlink-outline" size={15} color={C.accent} />
-              <Text style={[s.smallBtnText, { color: C.accent }]}>{tr('فك السوار', 'Unlink')}</Text>
-            </Pressable>
-          ) : (
-            linkFor !== m.id && (
-              <Pressable style={s.smallBtn} hitSlop={6} onPress={() => setLinkFor(m.id)}>
-                <Ionicons name="link-outline" size={15} color={C.accent} />
-                <Text style={[s.smallBtnText, { color: C.accent }]}>{tr('ربط سوار', 'Link bracelet')}</Text>
-              </Pressable>
-            )
-          )}
-          <Pressable style={s.smallBtn} hitSlop={6} onPress={() => removeMember(m)}>
-            <Ionicons name="trash-outline" size={15} color={C.danger} />
-            <Text style={[s.smallBtnText, { color: C.danger }]}>{tr('حذف', 'Delete')}</Text>
-          </Pressable>
-        </View>
       </View>
     );
   };
@@ -1311,8 +1324,8 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
             <FadeIn delay={90}>
               <Text style={s.askText}>
                 {tr(
-                  `ما وصلنا شي من سوار ${askMember.name} من ١٠ ثواني. هو معك؟`,
-                  `Nothing from ${askMember.name}’s bracelet for 10 seconds. Are they with you?`,
+                  `ما وصلنا شي من سوار ${askMember.name} من ${LOST_AFTER_MS / 1000} ثانية. هو معك؟`,
+                  `Nothing from ${askMember.name}’s bracelet for ${LOST_AFTER_MS / 1000} seconds. Are they with you?`,
                 )}
               </Text>
             </FadeIn>
@@ -1326,6 +1339,22 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
             </FadeIn>
           </View>
         </Modal>
+      )}
+
+      {menuMember && (
+        <ActionSheet
+          visible={menuOpen}
+          onClose={() => setMenuOpen(false)}
+          title={tr(`إجراءات ${menuMember.name}`, `${menuMember.name} actions`)}
+          cancel={tr('إلغاء', 'Cancel')}
+          actions={[
+            { label: tr(`تعديل بيانات ${menuMember.name}`, `Edit ${menuMember.name}’s details`), icon: 'create-outline', onPress: () => { setDraft(menuMember); setEditing(menuMember.id); } },
+            menuMember.mac
+              ? { label: tr('فك ارتباط السوار', 'Unlink bracelet'), icon: 'unlink-outline', onPress: () => askUnlink(menuMember) }
+              : { label: tr('ربط سوار', 'Link a bracelet'), icon: 'link-outline', onPress: () => setLinkFor(menuMember.id) },
+            { label: tr('حذف فرد العائلة', 'Delete family member'), icon: 'trash-outline', destructive: true, onPress: () => removeMember(menuMember) },
+          ]}
+        />
       )}
 
       <ScrollView ref={scrollRef} contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
@@ -1376,12 +1405,13 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
 
         {btOff && <Banner tone="danger" icon="bluetooth" text={tr('شغّلي البلوتوث عشان نتابع الأساور', 'Turn on Bluetooth so we can track the bracelets')} />}
 
-        {/* Screens and the form fade in; tab switches don't animate (seen dozens of times a session) */}
-        <FadeIn key={screen?.kind ?? (formOpen ? 'form' : 'tabs')}>
+        {/* Screens, the form and tab switches fade and lift in, the same as the volunteer side */}
+        <FadeIn key={screen?.kind ?? (formOpen ? 'form' : tab)}>
         {screen?.kind === 'lost' && screenMember && (
           <LostScreen
             name={screenMember.name}
             initial={screenMember.description}
+            initialPhoto={screenMember.photo}
             onSend={(d, photo) => sendReport(screenMember, 'lost', d, photo)}
             onCancel={() => setScreen(null)}
           />
@@ -1454,23 +1484,6 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
           </>
         )}
 
-        {!screen && tab === 'map' && (
-          <>
-            <Text style={ui.sectionTitle}>{tr('خريطة العائلة', 'Family map')}</Text>
-            {renderMap(420)}
-            {members.map((m) => {
-              const l = liveOf(m);
-              if (!l?.zone) return null;
-              return (
-                <Text key={m.id} style={s.mapNote}>
-                  {l.zone === 'LOST'
-                    ? tr(`${m.name}: آخر مرة كان ضمن ${l.radius} متر منك تقريبًا`, `${m.name}: last seen within about ${l.radius} m of you`)
-                    : tr(`${m.name} ضمن ${l.radius} متر منك تقريبًا`, `${m.name} is within about ${l.radius} m of you`)}
-                </Text>
-              );
-            })}
-          </>
-        )}
 
         {!screen && tab === 'profile' && (
           <>
@@ -1695,6 +1708,24 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
           </>
         )}
         </FadeIn>
+        {/* The map stays mounted once opened and is only hidden, so it does not rebuild on every visit */}
+        {mapSeen && (
+          <View style={{ display: !screen && tab === 'map' ? 'flex' : 'none' }}>
+            <Text style={ui.sectionTitle}>{tr('خريطة العائلة', 'Family map')}</Text>
+            {renderMap(420)}
+            {members.map((m) => {
+              const l = liveOf(m);
+              if (!l?.zone) return null;
+              return (
+                <Text key={m.id} style={s.mapNote}>
+                  {l.zone === 'LOST'
+                    ? tr(`${m.name}: آخر مرة كان ضمن ${l.radius} متر منك تقريبًا`, `${m.name}: last seen within about ${l.radius} m of you`)
+                    : tr(`${m.name} ضمن ${l.radius} متر منك تقريبًا`, `${m.name} is within about ${l.radius} m of you`)}
+                </Text>
+              );
+            })}
+          </View>
+        )}
       </ScrollView>
 
       <BottomNav
@@ -1722,8 +1753,9 @@ const s = StyleSheet.create({
   back: { flexDirection: 'row-reverse', alignItems: 'center', gap: 6, alignSelf: 'flex-end', marginBottom: 12 },
   backText: { color: C.accent, fontSize: 14, fontWeight: '700' },
   memberRow: { flexDirection: 'row-reverse', gap: 12, alignItems: 'flex-start' },
-  avatar: { width: 52, height: 52, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  avatar: { width: 52, height: 52, borderRadius: 18, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#fff', fontSize: 22, fontWeight: '700' },
+  avatarPhoto: { width: 52, height: 52, borderRadius: 18 },
   hint: { color: C.muted, fontSize: 12.5, textAlign: 'right', marginBottom: 10 },
   nearRow: {
     flexDirection: 'row-reverse', alignItems: 'center', gap: 10,
@@ -1735,11 +1767,6 @@ const s = StyleSheet.create({
   linkText: { color: '#fff', fontSize: 14, fontWeight: '700' },
   typedRow: { flexDirection: 'row-reverse', gap: 10, alignItems: 'stretch' },
   unlink: { color: C.accent, fontSize: 12.5, fontWeight: '700', textAlign: 'right', marginTop: 6 },
-  memberActions: {
-    flexDirection: 'row-reverse', gap: 18, marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border,
-  },
-  smallBtn: { flexDirection: 'row-reverse', alignItems: 'center', gap: 5 },
-  smallBtnText: { fontSize: 13, fontWeight: '700' },
   stepRow: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8, marginTop: 8 },
   stepText: { flex: 1, color: C.text, fontSize: 13.5, textAlign: 'right' },
   formTitle: { color: C.primary, fontSize: 16, fontWeight: '700', textAlign: 'right', marginBottom: 6 },
@@ -1752,6 +1779,8 @@ const s = StyleSheet.create({
   memberName: { color: C.primary, fontSize: 18, fontWeight: '800', textAlign: 'right' },
   memberRole: { color: C.muted, fontSize: 12.5, textAlign: 'right', marginTop: 2 },
   bars: { flexDirection: 'row', alignItems: 'flex-end', gap: 2 },
+  nameTools: { flexDirection: 'row-reverse', alignItems: 'center', gap: 10 },
+  more: { width: 30, height: 30, borderRadius: 15, backgroundColor: C.fill, alignItems: 'center', justifyContent: 'center' },
   bar: { width: 4, borderRadius: 2 },
   metaRow: { flexDirection: 'row-reverse', gap: 14, marginTop: 10, flexWrap: 'wrap' },
   meta: { flexDirection: 'row-reverse', alignItems: 'center', gap: 5 },

@@ -10,7 +10,8 @@ import { LanguagePicker } from '../../components/LanguagePicker';
 import { TYPE_UI, since } from './labels';
 import { isEn, tr, place } from '../../i18n';
 
-export type Notice = { text: string; tone: 'safe' | 'warn' | 'danger' };
+// text is read at render, so the notice follows a language switch
+export type Notice = { text: () => string; tone: 'safe' | 'warn' | 'danger' };
 
 type Props = {
   onDuty: boolean;
@@ -42,7 +43,7 @@ export default function DutyScreen(p: Props) {
       {p.notice && tone && (
         <Pressable style={[ui.strip, { backgroundColor: tone.bg }]} onPress={p.onDismissNotice}>
           <Ionicons name={tone.icon} size={16} color={tone.color} />
-          <Text style={[ui.stripText, { color: tone.color }]}>{p.notice.text}</Text>
+          <Text style={[ui.stripText, { color: tone.color }]}>{p.notice.text()}</Text>
         </Pressable>
       )}
 
