@@ -1412,6 +1412,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
             name={screenMember.name}
             initial={screenMember.description}
             initialPhoto={screenMember.photo}
+            hasBracelet={!!screenMember.mac}
             onSend={(d, photo) => sendReport(screenMember, 'lost', d, photo)}
             onCancel={() => setScreen(null)}
           />

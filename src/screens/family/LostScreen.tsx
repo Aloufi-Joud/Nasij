@@ -12,6 +12,7 @@ export default function LostScreen(p: {
   name: string;
   initial: string; // description saved with the member, editable here
   initialPhoto: string | null; // photo taken when the member was added, if any
+  hasBracelet: boolean;
   onSend: (description: string, photo: string | null) => void;
   onCancel: () => void;
 }) {
@@ -27,6 +28,10 @@ export default function LostScreen(p: {
         icon="lock-closed-outline"
         text={tr('المتطوعون القريبون يشوفون الوصف، والصورة يشوفها بس المتطوع اللي يستلم البلاغ، وتنحذف أول ما تلقونه', 'Nearby volunteers see the description; only the volunteer who takes the case sees the photo, deleted as soon as you find them')}
       />
+
+      {!p.hasBracelet && (
+        <Banner tone="warn" icon="watch-outline" text={tr('ما فيه سوار مربوط، المتطوعين بيدورون بالوصف والصورة. أضف صورة إذا تقدر', 'No bracelet linked: volunteers will search by the description and photo. Add a photo if you can')} />
+      )}
 
       <View style={ui.card}>
         <Text style={s.label}>{tr('صورة بملابسه اليوم (اختياري)', 'Photo in today’s clothes (optional)')}</Text>
