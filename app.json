@@ -4,6 +4,7 @@
     "slug": "nasij",
     "version": "1.0.0",
     "orientation": "portrait",
+    "scheme": "nasij",
     "icon": "./assets/icon.png",
     "ios": {
       "bundleIdentifier": "com.joud.nasij"
@@ -76,7 +77,8 @@
           "backgroundColor": "#0E3F3C",
           "imageWidth": 160
         }
-      ]
+      ],
+      ["expo-audio", { "microphonePermission": false }]
     ],
     "android": {
       "package": "com.joud.nasij"

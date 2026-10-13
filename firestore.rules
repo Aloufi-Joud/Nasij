@@ -29,7 +29,13 @@ service cloud.firestore {
         let d = request.resource.data;
         return short(d, 'name', 60) && short(d, 'phone', 20) && short(d, 'description', 300) && shortHealth(d.get('health', null));
       }
-      allow read: if signedIn() && (resource.data.familyId == me() || isSecurity());
+      // A volunteer who scanned this member's bracelet sticker in the last 10 minutes (volunteerScans/{uid})
+      function scanned() {
+        let scan = get(/databases/$(database)/documents/volunteerScans/$(me())).data;
+        return isVolunteer() && scan.at > request.time.toMillis() - 600000
+          && resource.data.braceletId == get(/databases/$(database)/documents/braceletTokens/$(scan.token)).data.braceletId;
+      }
+      allow read: if signedIn() && (resource.data.familyId == me() || isSecurity() || scanned());
       allow create: if signedIn() && request.resource.data.familyId == me() && valid();
       allow update: if signedIn() && resource.data.familyId == me() && request.resource.data.familyId == me() && valid();
       allow delete: if signedIn() && resource.data.familyId == me();
@@ -229,6 +235,16 @@ service cloud.firestore {
         && request.resource.data.token is string
         && get(/databases/$(database)/documents/braceletTokens/$(request.resource.data.token)).data.braceletId
            == getAfter(/databases/$(database)/documents/passerbyReports/$(id)).data.braceletId;
+    }
+
+    // The sticker token a volunteer just scanned: lets them read that bracelet's member (see /members).
+    // Only a real token (the sticker holds it), stamped with the current time
+    match /volunteerScans/{uid} {
+      allow create, update: if isVolunteer() && me() == uid
+        && request.resource.data.keys().hasOnly(['token', 'at'])
+        && request.resource.data.token is string
+        && exists(/databases/$(database)/documents/braceletTokens/$(request.resource.data.token))
+        && request.resource.data.at is int && nearNow(request.resource.data.at);
     }
 
     match /zones/{id} {

@@ -30,7 +30,8 @@ beforeEach(async () => {
       set('users/vol', { role: 'volunteer' }),
       set('users/vol2', { role: 'volunteer' }),
       set('users/sec', { role: 'security' }),
-      set('members/m1', { familyId: 'fam', name: 'سارة' }),
+      set('members/m1', { familyId: 'fam', name: 'سارة', braceletId: MINE }),
+      set('members/m9', { familyId: 'fam2', name: 'علي', braceletId: THEIRS }),
       set(`bracelets/${MINE}`, { familyId: 'fam', at: t }),
       set(`bracelets/${THEIRS}`, { familyId: 'fam2', at: t }),
       // r1: open child case; r2: child case a volunteer took; r3: closed case
@@ -92,6 +93,18 @@ allow('a family reads its own member', () => as('fam').doc('members/m1').get());
 deny('another family reads the member', () => as('fam2').doc('members/m1').get());
 deny('a volunteer reads a member', () => as('vol').doc('members/m1').get());
 allow('security reads a member', () => as('sec').doc('members/m1').get());
+
+// A volunteer who scanned the sticker reads that bracelet's member, and only that one
+const scan = (uid, token, at = now()) => as(uid).doc(`volunteerScans/${uid}`).set({ token, at });
+const scanThen = (uid, token, read) => async () => { await scan(uid, token); return read(); };
+allow('a volunteer saves a real sticker scan', () => scan('vol', 'tok1'));
+deny('a volunteer saves a made-up token', () => scan('vol', 'guessed123'));
+deny('a family saves a sticker scan', () => scan('fam', 'tok1'));
+deny('a volunteer saves an old scan', () => scan('vol', 'tok1', now() - 3600000));
+test('allow: a volunteer reads the member of the scanned bracelet', () =>
+  assertSucceeds(scanThen('vol', 'tok1', () => as('vol').collection('members').where('braceletId', '==', MINE).get())()));
+test('deny: a volunteer reads another family member after a scan', () =>
+  assertFails(scanThen('vol', 'tok1', () => as('vol').doc('members/m9').get())()));
 allow('a family adds a member', () => as('fam').doc('members/m2').set({ familyId: 'fam', name: 'علي' }));
 deny('a family adds a member to another family', () => as('fam').doc('members/m2').set({ familyId: 'fam2', name: 'علي' }));
 deny('a description over 300 characters', () => as('fam').doc('members/m2').set({ familyId: 'fam', description: 'x'.repeat(301) }));

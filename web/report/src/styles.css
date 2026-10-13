@@ -47,6 +47,7 @@ button, input { font: inherit; }
 .btn.big { min-height: 64px; font-size: 20px; }
 .btn.danger { background: var(--danger); }
 .btn.ghost { background: transparent; color: var(--danger); border: 1.5px solid var(--dangerBorder); font-weight: 600; }
+.btn.ghost.volunteer { color: var(--primary); border-color: var(--techBg); background: var(--techBg); }
 .btn:disabled { opacity: 0.55; cursor: default; }
 
 .check { display: flex; align-items: center; gap: 10px; margin: 4px 0 6px; color: var(--muted); font-size: 15px; cursor: pointer; }
