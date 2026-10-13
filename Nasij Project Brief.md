@@ -339,6 +339,12 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 - **`firestore.rules` changed, publish it:** new `volunteerScans/{uid}` = `{ token, at }`. A volunteer may write it only with a real sticker token. For 10 minutes after that, they may read the member whose `braceletId` is that token's bracelet, and no other member. Done by `memberOfSticker(token)` in `src/firebase/members.ts`. Tests added to `scripts/rules.test.mjs`
 - **Privacy:** this lets a volunteer see a member's health and phone without an open report, but only while holding the bracelet's sticker (the token is secret and printed only on the sticker). `ponytail:` unlinking already clears the member's `braceletId`. But if a family hands the bracelet back without unlinking it, their member can still match the next family's scan. Fix: clear it when the visit ends, or have the cleanup check `bracelets/{mac}`
 
+**Changes on 2026-10-13: sound for alerts inside the app** (same branch):
+
+- **New native package `expo-audio`:** run `npm install` after pulling. It needs the next Mac install. Builds without it only vibrate, as before. The microphone permission is turned off in `app.json`
+- New `alarm(pattern)` in `src/components/alarm.ts`: vibrates with the same pattern and plays two short beeps (`assets/alert.wav`), **even with the silent switch on**. The family app uses it for every alert (emergency or fall, far or lost, event edge, passer-by)
+- **Proposal for Person 3** (your folder, not done for you): in `src/screens/volunteer/VolunteerApp.tsx`, use `alarm(...)` in place of `Vibration.vibrate(...)` in `vibrateFor` (new report) and for a new passer-by report, so volunteers hear new reports too. Import it from `../../components/alarm`. Keep `Vibration.cancel()` as it is
+
 **Changes on 2026-10-12 that affect everyone** (branch `lost-signal-20s`):
 
 - **Volunteer notices follow the language switch** (part of the app-wide language work; touches `DutyScreen.tsx` and `VolunteerApp.tsx` in Person 3's folder): `Notice.text` in `DutyScreen.tsx` is now a function, `() => tr('…', '…')`, read when the notice is drawn. Before, the text was translated once when the notice was made, so a "report closed" notice stayed in Arabic after switching to English. New notices: pass `text: () => tr(...)`, and `endCase` / `dropShown` take the same kind of function

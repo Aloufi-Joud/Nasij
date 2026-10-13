@@ -23,6 +23,7 @@ import { minSec } from '../../components/digits';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { claimBracelet, releaseBracelet } from '../../firebase/bracelets';
+import { alarm } from '../../components/alarm';
 import { deleteMember, loadMembers, saveMember } from '../../firebase/members';
 import { loadProfile, type Profile } from '../../firebase/profile';
 import { closeReport, createReport, getHandoverCode, loadMyOpenReports, subscribeReport } from '../../firebase/reports';
@@ -331,7 +332,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
             if (!isNew) continue;
             // Always log it, even if another alert is already on screen
             addLog(kind, who);
-            Vibration.vibrate([0, 800, 300, 800, 300, 800]);
+            alarm([0, 800, 300, 800, 300, 800]);
             if (!sosRef.current) {
               sosRef.current = true;
               setSos({ kind, who, mac });
@@ -351,7 +352,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
           if (confirmed !== tr.zone) {
             tr.zone = confirmed;
             addLog(confirmed, who);
-            if (confirmed === 'FAR' || confirmed === 'LOST') Vibration.vibrate([0, 500, 200, 500]);
+            if (confirmed === 'FAR' || confirmed === 'LOST') alarm([0, 500, 200, 500]);
             const child = membersRef.current.find((m) => m.mac === mac && m.kind === 'child');
             if (confirmed === 'LOST' && child) setLostAsk(child.id);
           }
@@ -362,7 +363,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
           const edge = !!(meP && c && metresBetween(c, meP) + tr.radius > EVENT_RADIUS_M);
           if (edge && !tr.edge) {
             addLog('EDGE', who);
-            Vibration.vibrate([0, 500, 200, 500]);
+            alarm([0, 500, 200, 500]);
           }
           tr.edge = edge;
         }
@@ -538,7 +539,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
     const stops = macs.split(',').map((mac) =>
       subscribePasserbyAlert(mac, (a) => {
         setAlerts((o) => ({ ...o, [mac]: a }));
-        if (a && !a.answer && Date.now() - a.at < ALERT_FRESH_MS) Vibration.vibrate([0, 400, 200, 400]);
+        if (a && !a.answer && Date.now() - a.at < ALERT_FRESH_MS) alarm([0, 400, 200, 400]);
       }),
     );
     return () => stops.forEach((stop) => stop());
