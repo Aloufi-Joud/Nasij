@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
 import LoginScreen, { isDemo, type Role } from './src/screens/LoginScreen';
 import FamilyApp from './src/screens/family/FamilyApp';
 import { VolunteerApp } from './src/screens/volunteer';
@@ -21,6 +22,10 @@ export default function App() {
   useEffect(() => {
     if (!role) watchBracelets({});
   }, [role]);
+  // The splash should hide by itself once the first screen draws; hide it here too in case that signal never comes
+  useEffect(() => {
+    SplashScreen.hide();
+  }, []);
 
   const open = (r: Role) => {
     setRole(r);
