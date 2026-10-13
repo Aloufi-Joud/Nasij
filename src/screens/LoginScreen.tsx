@@ -48,8 +48,14 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
     ? mailOk && name.trim().length >= 2 && pwRules.every((r) => r.ok) && !busy
     : mailOk && password.length >= 6 && !!role && !busy; // existing accounts may have 6-character passwords
 
+  // Each page starts empty: what was typed on one doesn't follow to the other
   const switchMode = () => {
     setSigningUp(!signingUp);
+    setEmail('');
+    setPassword('');
+    setName('');
+    setConfirm('');
+    setRole(null);
     setError('');
     setInfo('');
   };
@@ -173,7 +179,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
         placeholderTextColor={C.faint}
         secureTextEntry
         autoCapitalize="none"
-        autoComplete="password" // fixed: changing it on iOS resets the secure field and wipes what was typed
+        autoComplete="password"
         textAlign="right"
       />
 
