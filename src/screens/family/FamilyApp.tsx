@@ -37,6 +37,7 @@ import MapScreen from './MapScreen';
 import MemberForm from './MemberForm';
 import { EMPTY, EVENT_RADIUS_M, KIND_UI, ZONE_UI, failed, formError, offset, type FamMember, type Form, type Live, type LogItem, type LogKind, type Zone } from './shared';
 import { langName, tr, place } from '../../i18n';
+import { watchBracelets } from '../../../modules/nasij-beacon';
 
 const NEAR = -65;           // stronger than this = near
 const FAR = -80;            // weaker than this = far
@@ -195,6 +196,15 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
   useEffect(() => {
     membersRef.current = members;
   });
+
+  // Locked phone: iOS warns when a linked bracelet's iBeacon goes out of range (needs the bracelet's iBeacon slot)
+  useEffect(() => {
+    const messages: Record<string, string> = {};
+    for (const m of members) {
+      if (m.mac) messages[m.mac] = tr(`ما نسمع سوار ${m.name}. افتح نسيج وتأكد`, `Can't hear ${m.name}'s bracelet. Open Nasij and check`);
+    }
+    watchBracelets(messages);
+  }, [members]);
 
   // Parent's own location (the circles are drawn around it)
   useEffect(() => {

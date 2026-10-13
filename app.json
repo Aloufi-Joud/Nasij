@@ -18,7 +18,8 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "نسيج يعرض موقعك على الخريطة عشان يبين لك مكان طفلك التقريبي"
+          "locationWhenInUsePermission": "نسيج يعرض موقعك على الخريطة عشان يبين لك مكان طفلك التقريبي",
+          "locationAlwaysAndWhenInUsePermission": "نسيج ينبهك إذا ابتعد سوار طفلك حتى لو جوالك مقفول"
         }
       ],
       [
