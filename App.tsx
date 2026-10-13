@@ -1,6 +1,6 @@
 // Nasij app shell: login, then the family or volunteer screens.
 // An account only opens its own side; the demo account (DEMO_EMAIL) can switch between both.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import LoginScreen, { isDemo, type Role } from './src/screens/LoginScreen';
@@ -8,6 +8,7 @@ import FamilyApp from './src/screens/family/FamilyApp';
 import { VolunteerApp } from './src/screens/volunteer';
 import { auth } from './src/firebase';
 import { useLang } from './src/i18n';
+import { watchBracelets } from './modules/nasij-beacon';
 
 export default function App() {
   // Screens are laid out right-to-left by hand (row-reverse). For English, 'rtl' here mirrors all of it.
@@ -16,6 +17,10 @@ export default function App() {
   // Demo account: keep a side mounted once opened, so switching back and forth during the demo
   // keeps the linked bracelet, the member and any open report.
   const [opened, setOpened] = useState<Role[]>([]);
+  // Signed out (or not signed in yet after a restart): iOS keeps watching bracelets across launches, so stop it
+  useEffect(() => {
+    if (!role) watchBracelets({});
+  }, [role]);
 
   const open = (r: Role) => {
     setRole(r);
