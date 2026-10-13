@@ -130,10 +130,12 @@ function getZone(ageMs: number, smooth: number, current: Zone | null): Zone {
   return 'FAR';
 }
 
-// Rough distance in metres from signal strength
+// Rough distance in metres from signal strength, rounded up to a few steps: the signal swings by several dB
+// when the phone just turns in the hand, so exact metres would jump around (8 to 18 m standing still)
+const METRE_STEPS = [5, 10, 20, 40, 60];
 function estimateMetres(smooth: number) {
   const d = Math.pow(10, (TX_AT_1M - smooth) / (10 * PATH_LOSS));
-  return Math.max(2, Math.min(60, Math.round(d)));
+  return METRE_STEPS.find((m) => d <= m) ?? 60;
 }
 
 type Tab = 'home' | 'map' | 'alerts' | 'profile';
