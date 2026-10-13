@@ -33,7 +33,10 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
-  const [signingUp, setSigningUp] = useState(false); // new family account
+  // Sign in, a new family account, or a reset link for a forgotten password
+  const [mode, setMode] = useState<'in' | 'up' | 'reset'>('in');
+  const signingUp = mode === 'up';
+  const resetting = mode === 'reset';
   const [name, setName] = useState('');
   const [confirm, setConfirm] = useState('');
   const mailOk = /^\S+@\S+\.\S+$/.test(email.trim());
@@ -44,13 +47,15 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
     { ok: /\d/.test(password), text: tr('رقم واحد على الأقل', 'At least one number') },
     { ok: !!confirm && confirm === password, text: tr('كلمتا المرور متطابقتان', 'Passwords match') },
   ];
-  const ready = signingUp
+  const ready = resetting
+    ? mailOk && !busy
+    : signingUp
     ? mailOk && name.trim().length >= 2 && pwRules.every((r) => r.ok) && !busy
     : mailOk && password.length >= 6 && !!role && !busy; // existing accounts may have 6-character passwords
 
   // Each page starts empty: what was typed on one doesn't follow to the other
-  const switchMode = () => {
-    setSigningUp(!signingUp);
+  const go = (next: typeof mode) => {
+    setMode(next);
     setEmail('');
     setPassword('');
     setName('');
@@ -140,6 +145,15 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
 
       <FadeIn delay={120}>
 
+      {resetting && (
+        <>
+          <Text style={s.pageTitle}>{tr('نسيت كلمة المرور', 'Forgot password')}</Text>
+          <Text style={[ui.muted, s.note, { marginBottom: 8 }]}>
+            {tr('اكتب بريدك الإلكتروني، ونرسل لك رابط تختار فيه كلمة مرور جديدة.', 'Enter your email and we’ll send you a link to choose a new password.')}
+          </Text>
+        </>
+      )}
+
       {signingUp && (
         <>
           <Text style={ui.caption}>{tr('الاسم', 'Name')}</Text>
@@ -170,6 +184,8 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
         textAlign="right"
       />
 
+      {!resetting && (
+      <>
       <Text style={ui.caption}>{tr('كلمة المرور', 'Password')}</Text>
       <TextInput
         style={s.input}
@@ -182,6 +198,8 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
         autoComplete="password"
         textAlign="right"
       />
+      </>
+      )}
 
       {signingUp && (
         <>
@@ -210,7 +228,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
         <Text style={[ui.muted, s.note]}>
           {tr('إنشاء الحساب للعائلات فقط. حسابات المتطوعين تجهّزها إدارة الفعالية.', 'Sign-up is for families only. Volunteer accounts are set up by the event.')}
         </Text>
-      ) : (
+      ) : !resetting && (
       <>
       <Text style={ui.caption}>{tr('أنا', 'I am')}</Text>
       {ROLES().map((r) => {
@@ -229,7 +247,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
         );
       })}
 
-      <Pressable onPress={resetPassword} hitSlop={8} style={{ marginTop: 10 }}>
+      <Pressable onPress={() => go('reset')} hitSlop={8} style={{ marginTop: 10 }}>
         <Text style={s.forgot}>{tr('نسيت كلمة المرور؟', 'Forgot password?')}</Text>
       </Pressable>
       </>
@@ -237,14 +255,18 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
 
       {!!error && <Text style={s.error}>{error}</Text>}
       {!!info && <Text style={s.info}>{info}</Text>}
-      {signingUp ? (
+      {resetting ? (
+        <Button label={tr('أرسل الرابط', 'Send the link')} onPress={resetPassword} disabled={!ready} style={{ marginTop: 22 }} />
+      ) : signingUp ? (
         <Button label={busy ? tr('جارٍ الإنشاء…', 'Signing up…') : tr('إنشاء حساب عائلة', 'Create family account')} onPress={signUp} disabled={!ready} style={{ marginTop: 22 }} />
       ) : (
         <Button label={busy ? tr('جارٍ الدخول…', 'Signing in…') : tr('دخول', 'Sign in')} onPress={login} disabled={!ready} style={{ marginTop: 22 }} />
       )}
-      <Pressable onPress={switchMode} hitSlop={8} style={{ marginTop: 16 }}>
+      <Pressable onPress={() => go(mode === 'in' ? 'up' : 'in')} hitSlop={8} style={{ marginTop: 16 }}>
         <Text style={s.switch}>
-          {signingUp ? tr('عندك حساب؟ سجّل دخول', 'Have an account? Sign in') : tr('عائلة جديدة؟ أنشئ حساب', 'New family? Create an account')}
+          {mode === 'in' ? tr('عائلة جديدة؟ أنشئ حساب', 'New family? Create an account')
+          : signingUp ? tr('عندك حساب؟ سجّل دخول', 'Have an account? Sign in')
+          : tr('رجوع لتسجيل الدخول', 'Back to sign in')}
         </Text>
       </Pressable>
       </FadeIn>
@@ -263,6 +285,7 @@ const s = StyleSheet.create({
   },
   mark: { width: 56, height: 56 },
   note: { textAlign: 'right', marginTop: 12 },
+  pageTitle: { color: C.primary, fontSize: F.h2, fontWeight: '700', textAlign: 'right', marginTop: 8 },
   rule: { flexDirection: 'row-reverse', alignItems: 'center', gap: 6, marginTop: 6 },
   switch: { color: C.accent, fontSize: F.body, fontWeight: '600', textAlign: 'center' },
   name: { color: C.primary, fontSize: 34, fontWeight: '800', textAlign: 'center', marginTop: 16 },
