@@ -161,7 +161,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
         autoCapitalize="none"
         autoCorrect={false}
         autoComplete="email"
-        textAlign="left"
+        textAlign="right"
       />
 
       <Text style={ui.caption}>{tr('كلمة المرور', 'Password')}</Text>
@@ -173,7 +173,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
         placeholderTextColor={C.faint}
         secureTextEntry
         autoCapitalize="none"
-        autoComplete={signingUp ? 'new-password' : 'password'}
+        autoComplete="password" // fixed: changing it on iOS resets the secure field and wipes what was typed
         textAlign="right"
       />
 
@@ -188,7 +188,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
             placeholderTextColor={C.faint}
             secureTextEntry
             autoCapitalize="none"
-            autoComplete="new-password"
+            autoComplete="off"
             textAlign="right"
           />
           {pwRules.map((r) => (
