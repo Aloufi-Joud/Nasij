@@ -1,7 +1,7 @@
 // Nasij family app: several members, one bracelet each. Measures each signal and alerts when one moves away.
 // Same logic as the tested laptop scanner (nasij_scanner.py)
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Image, Modal, ScrollView, StyleSheet, Vibration, View } from 'react-native';
+import { Alert, AppState, Image, Modal, ScrollView, StyleSheet, Vibration, View } from 'react-native';
 import { Text, TextInput } from '../../components/Text';
 import { FadeIn, Pressable } from '../../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
@@ -255,6 +255,14 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
       tr.latest = { rssi: device.rssi, ...summarize(tr.history), lastSeen: t };
     });
 
+    // iOS stops scanning while the app is in the background: on return, give each bracelet a fresh
+    // LOST_AFTER_MS to be heard again instead of calling it lost at once (the iBeacon warning covers the locked time)
+    const resumed = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      const t = Date.now();
+      for (const tr of Object.values(tracks)) if (tr.latest) tr.latest = { ...tr.latest, lastSeen: t };
+    });
+
     // Twice a second: decide each bracelet's zone and refresh the screen
     const timer = setInterval(() => {
       const t = Date.now();
@@ -358,6 +366,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
     return () => {
       stopState();
       stopScan();
+      resumed.remove();
       clearInterval(timer);
       // Leaving the screen never drops a waiting help request: send it now (fails safe)
       for (const mac of Object.keys(pendingSos.current)) autoReport.current('emergency', mac);
