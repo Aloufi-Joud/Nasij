@@ -126,6 +126,10 @@ export default function App() {
             حالة طارئة؟ اتصل بالإسعاف {AMBULANCE}
           </a>
 
+          <a className="btn ghost volunteer" href={`nasij://bracelet?t=${token}`}>
+            أنا متطوع، افتح في تطبيق نسيج
+          </a>
+
           <p className="privacy">
             <span aria-hidden="true">🔒</span> لن ترى أي بيانات عن صاحب السوار، ولا نطلب اسمك أو رقمك.
           </p>
