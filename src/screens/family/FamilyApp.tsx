@@ -1,7 +1,7 @@
 // Nasij family app: several members, one bracelet each. Measures each signal and alerts when one moves away.
 // Same logic as the tested laptop scanner (nasij_scanner.py)
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Image, Modal, ScrollView, StyleSheet, Vibration, View } from 'react-native';
+import { Alert, AppState, Image, Modal, ScrollView, StyleSheet, Vibration, View } from 'react-native';
 import { Text, TextInput } from '../../components/Text';
 import { FadeIn, Pressable } from '../../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
@@ -37,10 +37,12 @@ import MapScreen from './MapScreen';
 import MemberForm from './MemberForm';
 import { EMPTY, EVENT_RADIUS_M, KIND_UI, ZONE_UI, failed, formError, offset, type FamMember, type Form, type Live, type LogItem, type LogKind, type Zone } from './shared';
 import { langName, tr, place } from '../../i18n';
+import { watchBracelets } from '../../../modules/nasij-beacon';
 
 const NEAR = -65;           // stronger than this = near
 const FAR = -80;            // weaker than this = far
 const HOLD_MS = 3000;       // a new state must last 3 s before we show it
+const RESUME_GRACE_MS = 5000; // back from the background: time to hear each bracelet again before "lost"
 const GAP = 4;              // extra margin needed to leave NEAR or FAR
 const TX_AT_1M = -59;       // average signal at 1 metre (calibrate with the laptop scanner)
 const PATH_LOSS = 2.5;      // how fast the signal fades (2 = open air, 3 = crowded)
@@ -128,10 +130,12 @@ function getZone(ageMs: number, smooth: number, current: Zone | null): Zone {
   return 'FAR';
 }
 
-// Rough distance in metres from signal strength
+// Rough distance in metres from signal strength, rounded up to a few steps: the signal swings by several dB
+// when the phone just turns in the hand, so exact metres would jump around (8 to 18 m standing still)
+const METRE_STEPS = [5, 10, 20, 40, 60];
 function estimateMetres(smooth: number) {
   const d = Math.pow(10, (TX_AT_1M - smooth) / (10 * PATH_LOSS));
-  return Math.max(2, Math.min(60, Math.round(d)));
+  return METRE_STEPS.find((m) => d <= m) ?? 60;
 }
 
 type Tab = 'home' | 'map' | 'alerts' | 'profile';
@@ -196,6 +200,15 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
     membersRef.current = members;
   });
 
+  // Locked phone: iOS warns when a linked bracelet's iBeacon goes out of range (needs the bracelet's iBeacon slot)
+  useEffect(() => {
+    const messages: Record<string, string> = {};
+    for (const m of members) {
+      if (m.mac) messages[m.mac] = tr(`ما نسمع سوار ${m.name}. افتح نسيج وتأكد`, `Can't hear ${m.name}'s bracelet. Open Nasij and check`);
+    }
+    watchBracelets(messages);
+  }, [members]);
+
   // Parent's own location (the circles are drawn around it)
   useEffect(() => {
     let watch: Location.LocationSubscription | null = null;
@@ -243,6 +256,17 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
       if (tr.latest && t - tr.latest.lastSeen > LOST_AFTER_MS) tr.history = [];
       tr.history = [...tr.history, device.rssi].slice(-WINDOW);
       tr.latest = { rssi: device.rssi, ...summarize(tr.history), lastSeen: t };
+    });
+
+    // iOS stops scanning while the app is in the background: on return, give each bracelet RESUME_GRACE_MS
+    // to be heard again instead of calling it lost at once. Short on purpose: a bracelet that really left
+    // while the phone was locked is still reported a few seconds after opening the app.
+    const resumed = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      const graceFrom = Date.now() - LOST_AFTER_MS + RESUME_GRACE_MS;
+      for (const tr of Object.values(tracks)) {
+        if (tr.latest && tr.latest.lastSeen < graceFrom) tr.latest = { ...tr.latest, lastSeen: graceFrom };
+      }
     });
 
     // Twice a second: decide each bracelet's zone and refresh the screen
@@ -318,7 +342,9 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
             else autoReport.current('fall', mac);
           }
 
-          const raw = getZone(t - r.lastSeen, r.smooth, tr.zone);
+          // iOS can wake the app in the background (iBeacon events) while it hears nothing: keep the zone until it is on screen
+          const age = AppState.currentState === 'active' ? t - r.lastSeen : 0;
+          const raw = getZone(age, r.smooth, tr.zone);
           if (raw !== tr.candidate.zone) tr.candidate = { zone: raw, since: t };
           const confirmed = tr.zone === null || raw === 'LOST' || t - tr.candidate.since >= HOLD_MS ? raw : tr.zone;
           if (confirmed !== 'LOST') tr.radius = estimateMetres(r.smooth);
@@ -348,6 +374,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
     return () => {
       stopState();
       stopScan();
+      resumed.remove();
       clearInterval(timer);
       // Leaving the screen never drops a waiting help request: send it now (fails safe)
       for (const mac of Object.keys(pendingSos.current)) autoReport.current('emergency', mac);
@@ -898,7 +925,6 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
           <>
             <HeaderButton icon="notifications-outline" label={tr('التنبيهات', 'Alerts')} badge={unread} onPress={() => setTab('alerts')} />
             {onSwitchRole && <HeaderButton icon="swap-horizontal" label={tr('تبديل إلى متطوع', 'Switch to volunteer')} onPress={onSwitchRole} />}
-            <HeaderButton icon="exit-outline" label={tr('إنهاء الزيارة', 'End visit')} onPress={endVisit} />
           </>
         }
       >

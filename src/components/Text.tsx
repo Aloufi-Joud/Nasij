@@ -14,7 +14,9 @@ export function Text(p: TextProps) {
 // 'right' (the default for Arabic-first screens) becomes 'left' in English. 'left' holds Latin text (email) and stays left.
 export function TextInput(p: TextInputProps) {
   const flip = isEn() && p.textAlign === 'right';
+  const align = flip ? 'left' : p.textAlign;
   // letterSpacing 0 by default: iOS reuses native inputs, and spacing left from another input (the 6-digit code)
-  // pulls Arabic letters apart (the placeholder showed "أ و  معلم  قر يب")
-  return <RNTextInput {...p} textAlign={flip ? 'left' : p.textAlign} style={[font, { letterSpacing: 0 }, p.style]} />;
+  // pulls Arabic letters apart (the placeholder showed "أ و  معلم  قر يب").
+  // Alignment also goes in the style: otherwise Latin text (a password) follows its own direction and sits on the left in Arabic
+  return <RNTextInput {...p} textAlign={align} style={[font, { letterSpacing: 0 }, align && { textAlign: align }, p.style]} />;
 }

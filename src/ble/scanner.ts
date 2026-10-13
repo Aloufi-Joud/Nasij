@@ -2,6 +2,7 @@
 // mounted together, and the phone allows only one scan, so they subscribe here.
 // The app only listens to broadcasts; it never connects to a bracelet.
 import { useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 import { BleManager, Device, State } from 'react-native-ble-plx';
 import { LOST_AFTER_MS, WINDOW, braceletMac, summarize, type Signal } from './signal';
 
@@ -24,6 +25,16 @@ function sync() {
     manager.stopDeviceScan();
   }
 }
+
+// Back on screen: restart the scan. After the background, iOS can keep merging repeated packets
+// from the same bracelet, so only the first one arrives and the bracelet looks lost after a moment.
+AppState.addEventListener('change', (state) => {
+  if (state !== 'active' || !scanning) return;
+  manager.stopDeviceScan().catch(() => {}).finally(() => {
+    scanning = false;
+    sync();
+  });
+});
 
 manager.onStateChange((state) => {
   btState = state;

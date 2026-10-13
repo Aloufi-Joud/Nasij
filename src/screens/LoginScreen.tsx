@@ -1,12 +1,12 @@
 // Login and role choice with Firebase Auth (email and password).
-// A new email is signed up on the spot, so the demo needs no separate sign-up screen.
+// Only families sign up here; volunteer accounts are made by the event (Firebase console) and pick "volunteer" on first sign-in.
 // The role picked at sign-up is the account's role for good: signing in as the other one is refused.
 // Except the demo account, which opens either side and has the switch button.
 import { useState } from 'react';
 import { createUserWithEmailAndPassword, sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { Image, ScrollView, StyleSheet, View } from 'react-native';
 import { Text, TextInput } from '../components/Text';
 import { FadeIn, Pressable } from '../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
@@ -33,8 +33,57 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
-  // Firebase Auth needs a valid email and a password of 6 or more characters
-  const ready = /^\S+@\S+\.\S+$/.test(email.trim()) && password.length >= 6 && !!role && !busy;
+  // Sign in, a new family account, or a reset link for a forgotten password
+  const [mode, setMode] = useState<'in' | 'up' | 'reset'>('in');
+  const signingUp = mode === 'up';
+  const resetting = mode === 'reset';
+  const [name, setName] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const mailOk = /^\S+@\S+\.\S+$/.test(email.trim());
+  // New accounts: a slightly stronger password than Firebase's 6 characters, shown as a live checklist
+  const pwRules = [
+    { ok: password.length >= 8, text: tr('٨ أحرف أو أكثر', '8 characters or more') },
+    { ok: /[A-Za-z]/.test(password), text: tr('حرف إنجليزي واحد على الأقل', 'At least one letter') },
+    { ok: /\d/.test(password), text: tr('رقم واحد على الأقل', 'At least one number') },
+    { ok: !!confirm && confirm === password, text: tr('كلمتا المرور متطابقتان', 'Passwords match') },
+  ];
+  const ready = resetting
+    ? mailOk && !busy
+    : signingUp
+    ? mailOk && name.trim().length >= 2 && pwRules.every((r) => r.ok) && !busy
+    : mailOk && password.length >= 6 && !!role && !busy; // existing accounts may have 6-character passwords
+
+  // Each page starts empty: what was typed on one doesn't follow to the other
+  const go = (next: typeof mode) => {
+    setMode(next);
+    setEmail('');
+    setPassword('');
+    setName('');
+    setConfirm('');
+    setRole(null);
+    setError('');
+    setInfo('');
+  };
+
+  const signUp = async () => {
+    setBusy(true);
+    setError('');
+    setInfo('');
+    try {
+      const mail = email.trim();
+      const cred = await createUserWithEmailAndPassword(auth, mail, password);
+      await setDoc(doc(db, 'users', cred.user.uid), { email: mail, role: 'family', name: name.trim() }, { merge: true });
+      onLogin('family');
+    } catch (e: any) {
+      setError(
+        e.code === 'auth/email-already-in-use' ? tr('تعذر إنشاء الحساب بهذا البريد، جرّب تسجيل الدخول', 'Couldn’t sign up with this email, try signing in')
+        : e.code === 'auth/network-request-failed' ? tr('لا يوجد اتصال بالإنترنت', 'No internet connection')
+        : tr('تعذر إنشاء الحساب، حاول مرة أخرى', 'Could not sign up, try again'),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const login = async () => {
     if (!role) return;
@@ -43,11 +92,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
     setInfo('');
     try {
       const mail = email.trim();
-      const cred = await signInWithEmailAndPassword(auth, mail, password).catch(async (e) => {
-        // Unknown email: sign up. A known email with the wrong password fails here with email-already-in-use.
-        if (e.code !== 'auth/invalid-credential' && e.code !== 'auth/user-not-found') throw e;
-        return createUserWithEmailAndPassword(auth, mail, password);
-      });
+      const cred = await signInWithEmailAndPassword(auth, mail, password);
       const ref = doc(db, 'users', cred.user.uid);
       const saved = (await getDoc(ref)).data()?.role as string | undefined;
       if (saved && saved !== role && !isDemo(mail)) {
@@ -65,7 +110,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
     } catch (e: any) {
       // One message for a wrong email or password, so the screen never tells which emails have accounts
       setError(
-        e.code === 'auth/email-already-in-use' || e.code === 'auth/wrong-password' ? tr('البريد أو كلمة المرور غير صحيحة', 'Wrong email or password')
+        ['auth/invalid-credential', 'auth/user-not-found', 'auth/wrong-password'].includes(e.code) ? tr('البريد أو كلمة المرور غير صحيحة', 'Wrong email or password')
         : e.code === 'auth/network-request-failed' ? tr('لا يوجد اتصال بالإنترنت', 'No internet connection')
         : e.code === 'auth/too-many-requests' ? tr('محاولات كثيرة، حاول بعد قليل', 'Too many attempts, try again shortly')
         : tr('تعذر تسجيل الدخول، حاول مرة أخرى', 'Could not sign in, try again'),
@@ -91,7 +136,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
       </View>
       {/* Seen once per visit, so it can afford a short staggered entrance */}
       <FadeIn pop style={s.logo}>
-        <Ionicons name="shield-checkmark" size={38} color="#fff" />
+        <Image source={require('../../assets/splash-icon.png')} style={s.mark} />
       </FadeIn>
       <FadeIn delay={60}>
         <Text style={s.name}>{tr('نسيج', 'Nasij')}</Text>
@@ -99,6 +144,31 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
       </FadeIn>
 
       <FadeIn delay={120}>
+
+      {resetting && (
+        <>
+          <Text style={s.pageTitle}>{tr('نسيت كلمة المرور', 'Forgot password')}</Text>
+          <Text style={[ui.muted, s.note, { marginBottom: 8 }]}>
+            {tr('اكتب بريدك الإلكتروني، ونرسل لك رابط تختار فيه كلمة مرور جديدة.', 'Enter your email and we’ll send you a link to choose a new password.')}
+          </Text>
+        </>
+      )}
+
+      {signingUp && (
+        <>
+          <Text style={ui.caption}>{tr('الاسم', 'Name')}</Text>
+          <TextInput
+            style={s.input}
+            value={name}
+            onChangeText={setName}
+            placeholder={tr('اسم ولي الأمر', 'Guardian’s name')}
+            placeholderTextColor={C.faint}
+            maxLength={60}
+            autoComplete="name"
+            textAlign="right"
+          />
+        </>
+      )}
 
       <Text style={ui.caption}>{tr('البريد الإلكتروني', 'Email')}</Text>
       <TextInput
@@ -111,22 +181,55 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
         autoCapitalize="none"
         autoCorrect={false}
         autoComplete="email"
-        textAlign="left"
+        textAlign="right"
       />
 
+      {!resetting && (
+      <>
       <Text style={ui.caption}>{tr('كلمة المرور', 'Password')}</Text>
       <TextInput
         style={s.input}
         value={password}
         onChangeText={setPassword}
-        placeholder={tr('٦ أحرف أو أكثر', '6 characters or more')}
+        placeholder={signingUp ? tr('٨ أحرف أو أكثر', '8 characters or more') : tr('٦ أحرف أو أكثر', '6 characters or more')}
         placeholderTextColor={C.faint}
         secureTextEntry
         autoCapitalize="none"
         autoComplete="password"
         textAlign="right"
       />
+      </>
+      )}
 
+      {signingUp && (
+        <>
+          <Text style={ui.caption}>{tr('تأكيد كلمة المرور', 'Confirm password')}</Text>
+          <TextInput
+            style={s.input}
+            value={confirm}
+            onChangeText={setConfirm}
+            placeholder={tr('اكتبها مرة ثانية', 'Type it again')}
+            placeholderTextColor={C.faint}
+            secureTextEntry
+            autoCapitalize="none"
+            autoComplete="off"
+            textAlign="right"
+          />
+          {pwRules.map((r) => (
+            <View key={r.text} style={s.rule}>
+              <Ionicons name={r.ok ? 'checkmark-circle' : 'ellipse-outline'} size={16} color={r.ok ? C.safe : C.faint} />
+              <Text style={[ui.muted, r.ok && { color: C.safe }]}>{r.text}</Text>
+            </View>
+          ))}
+        </>
+      )}
+
+      {signingUp ? (
+        <Text style={[ui.muted, s.note]}>
+          {tr('إنشاء الحساب للعائلات فقط. حسابات المتطوعين تجهّزها إدارة الفعالية.', 'Sign-up is for families only. Volunteer accounts are set up by the event.')}
+        </Text>
+      ) : !resetting && (
+      <>
       <Text style={ui.caption}>{tr('أنا', 'I am')}</Text>
       {ROLES().map((r) => {
         const on = role === r.key;
@@ -144,13 +247,28 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
         );
       })}
 
-      <Pressable onPress={resetPassword} hitSlop={8} style={{ marginTop: 10 }}>
+      <Pressable onPress={() => go('reset')} hitSlop={8} style={{ marginTop: 10 }}>
         <Text style={s.forgot}>{tr('نسيت كلمة المرور؟', 'Forgot password?')}</Text>
       </Pressable>
+      </>
+      )}
 
       {!!error && <Text style={s.error}>{error}</Text>}
       {!!info && <Text style={s.info}>{info}</Text>}
-      <Button label={busy ? tr('جارٍ الدخول…', 'Signing in…') : tr('دخول', 'Sign in')} onPress={login} disabled={!ready} style={{ marginTop: 22 }} />
+      {resetting ? (
+        <Button label={tr('أرسل الرابط', 'Send the link')} onPress={resetPassword} disabled={!ready} style={{ marginTop: 22 }} />
+      ) : signingUp ? (
+        <Button label={busy ? tr('جارٍ الإنشاء…', 'Signing up…') : tr('إنشاء حساب عائلة', 'Create family account')} onPress={signUp} disabled={!ready} style={{ marginTop: 22 }} />
+      ) : (
+        <Button label={busy ? tr('جارٍ الدخول…', 'Signing in…') : tr('دخول', 'Sign in')} onPress={login} disabled={!ready} style={{ marginTop: 22 }} />
+      )}
+      <Pressable onPress={() => go(mode === 'in' ? 'up' : 'in')} hitSlop={8} style={{ marginTop: 16 }}>
+        <Text style={s.switch}>
+          {mode === 'in' ? tr('عائلة جديدة؟ أنشئ حساب', 'New family? Create an account')
+          : signingUp ? tr('عندك حساب؟ سجّل دخول', 'Have an account? Sign in')
+          : tr('رجوع لتسجيل الدخول', 'Back to sign in')}
+        </Text>
+      </Pressable>
       </FadeIn>
     </ScrollView>
   );
@@ -165,6 +283,11 @@ const s = StyleSheet.create({
     alignSelf: 'center', alignItems: 'center', justifyContent: 'center',
     ...shadow.card, shadowOpacity: 0.25,
   },
+  mark: { width: 56, height: 56 },
+  note: { textAlign: 'right', marginTop: 12 },
+  pageTitle: { color: C.primary, fontSize: F.h2, fontWeight: '700', textAlign: 'right', marginTop: 8 },
+  rule: { flexDirection: 'row-reverse', alignItems: 'center', gap: 6, marginTop: 6 },
+  switch: { color: C.accent, fontSize: F.body, fontWeight: '600', textAlign: 'center' },
   name: { color: C.primary, fontSize: 34, fontWeight: '800', textAlign: 'center', marginTop: 16 },
   tagline: { color: C.muted, fontSize: F.body, textAlign: 'center', marginTop: 4, marginBottom: 10 },
   input: { ...ui.input, fontSize: 16 },

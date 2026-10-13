@@ -4,6 +4,7 @@
     "slug": "nasij",
     "version": "1.0.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "ios": {
       "bundleIdentifier": "com.joud.nasij"
     },
@@ -18,7 +19,8 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "نسيج يعرض موقعك على الخريطة عشان يبين لك مكان طفلك التقريبي"
+          "locationWhenInUsePermission": "نسيج يعرض موقعك على الخريطة عشان يبين لك مكان طفلك التقريبي",
+          "locationAlwaysAndWhenInUsePermission": "نسيج ينبهك إذا ابتعد سوار طفلك حتى لو جوالك مقفول"
         }
       ],
       [
@@ -65,6 +67,14 @@
               "node_modules/@expo-google-fonts/ibm-plex-sans-arabic/700Bold/IBMPlexSansArabic_700Bold.ttf"
             ]
           }
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "backgroundColor": "#0E3F3C",
+          "imageWidth": 160
         }
       ]
     ],
