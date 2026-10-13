@@ -34,8 +34,19 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const [signingUp, setSigningUp] = useState(false); // new family account
-  // Firebase Auth needs a valid email and a password of 6 or more characters
-  const ready = /^\S+@\S+\.\S+$/.test(email.trim()) && password.length >= 6 && (signingUp || !!role) && !busy;
+  const [name, setName] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const mailOk = /^\S+@\S+\.\S+$/.test(email.trim());
+  // New accounts: a slightly stronger password than Firebase's 6 characters, shown as a live checklist
+  const pwRules = [
+    { ok: password.length >= 8, text: tr('٨ أحرف أو أكثر', '8 characters or more') },
+    { ok: /[A-Za-z]/.test(password), text: tr('حرف إنجليزي واحد على الأقل', 'At least one letter') },
+    { ok: /\d/.test(password), text: tr('رقم واحد على الأقل', 'At least one number') },
+    { ok: !!confirm && confirm === password, text: tr('كلمتا المرور متطابقتان', 'Passwords match') },
+  ];
+  const ready = signingUp
+    ? mailOk && name.trim().length >= 2 && pwRules.every((r) => r.ok) && !busy
+    : mailOk && password.length >= 6 && !!role && !busy; // existing accounts may have 6-character passwords
 
   const switchMode = () => {
     setSigningUp(!signingUp);
@@ -50,7 +61,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
     try {
       const mail = email.trim();
       const cred = await createUserWithEmailAndPassword(auth, mail, password);
-      await setDoc(doc(db, 'users', cred.user.uid), { email: mail, role: 'family' }, { merge: true });
+      await setDoc(doc(db, 'users', cred.user.uid), { email: mail, role: 'family', name: name.trim() }, { merge: true });
       onLogin('family');
     } catch (e: any) {
       setError(
@@ -123,6 +134,22 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
 
       <FadeIn delay={120}>
 
+      {signingUp && (
+        <>
+          <Text style={ui.caption}>{tr('الاسم', 'Name')}</Text>
+          <TextInput
+            style={s.input}
+            value={name}
+            onChangeText={setName}
+            placeholder={tr('اسم ولي الأمر', 'Guardian’s name')}
+            placeholderTextColor={C.faint}
+            maxLength={60}
+            autoComplete="name"
+            textAlign="right"
+          />
+        </>
+      )}
+
       <Text style={ui.caption}>{tr('البريد الإلكتروني', 'Email')}</Text>
       <TextInput
         style={s.input}
@@ -142,13 +169,36 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
         style={s.input}
         value={password}
         onChangeText={setPassword}
-        placeholder={tr('٦ أحرف أو أكثر', '6 characters or more')}
+        placeholder={signingUp ? tr('٨ أحرف أو أكثر', '8 characters or more') : tr('٦ أحرف أو أكثر', '6 characters or more')}
         placeholderTextColor={C.faint}
         secureTextEntry
         autoCapitalize="none"
-        autoComplete="password"
+        autoComplete={signingUp ? 'new-password' : 'password'}
         textAlign="right"
       />
+
+      {signingUp && (
+        <>
+          <Text style={ui.caption}>{tr('تأكيد كلمة المرور', 'Confirm password')}</Text>
+          <TextInput
+            style={s.input}
+            value={confirm}
+            onChangeText={setConfirm}
+            placeholder={tr('اكتبها مرة ثانية', 'Type it again')}
+            placeholderTextColor={C.faint}
+            secureTextEntry
+            autoCapitalize="none"
+            autoComplete="new-password"
+            textAlign="right"
+          />
+          {pwRules.map((r) => (
+            <View key={r.text} style={s.rule}>
+              <Ionicons name={r.ok ? 'checkmark-circle' : 'ellipse-outline'} size={16} color={r.ok ? C.safe : C.faint} />
+              <Text style={[ui.muted, r.ok && { color: C.safe }]}>{r.text}</Text>
+            </View>
+          ))}
+        </>
+      )}
 
       {signingUp ? (
         <Text style={[ui.muted, s.note]}>
@@ -206,7 +256,8 @@ const s = StyleSheet.create({
     ...shadow.card, shadowOpacity: 0.25,
   },
   mark: { width: 56, height: 56 },
-  note: { textAlign: 'right', marginTop: 4 },
+  note: { textAlign: 'right', marginTop: 12 },
+  rule: { flexDirection: 'row-reverse', alignItems: 'center', gap: 6, marginTop: 6 },
   switch: { color: C.accent, fontSize: F.body, fontWeight: '600', textAlign: 'center' },
   name: { color: C.primary, fontSize: 34, fontWeight: '800', textAlign: 'center', marginTop: 16 },
   tagline: { color: C.muted, fontSize: F.body, textAlign: 'center', marginTop: 4, marginBottom: 10 },
