@@ -925,7 +925,6 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
           <>
             <HeaderButton icon="notifications-outline" label={tr('التنبيهات', 'Alerts')} badge={unread} onPress={() => setTab('alerts')} />
             {onSwitchRole && <HeaderButton icon="swap-horizontal" label={tr('تبديل إلى متطوع', 'Switch to volunteer')} onPress={onSwitchRole} />}
-            <HeaderButton icon="exit-outline" label={tr('إنهاء الزيارة', 'End visit')} onPress={endVisit} />
           </>
         }
       >
