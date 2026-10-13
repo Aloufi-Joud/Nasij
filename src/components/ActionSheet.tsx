@@ -1,10 +1,11 @@
 // iOS-style action sheet, the same on both platforms: a titled group of rows with icons, and a separate Cancel.
-// The scrim fades with the Modal; the sheet rises from below with the drawer curve.
+// The sheet rises from below with the drawer curve and leaves the same way, a little faster; the scrim follows it.
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Modal, Platform, Pressable as RNPressable, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Text } from './Text';
 import { C } from '../theme';
+import { easeOut } from './Motion';
 import { isEn } from '../i18n';
 import type { IconName } from './Header';
 
@@ -12,13 +13,17 @@ export type SheetAction = { label: string; icon: IconName; destructive?: boolean
 
 export function ActionSheet(p: { visible: boolean; title: string; actions: SheetAction[]; cancel: string; onClose: () => void }) {
   const [y] = useState(() => new Animated.Value(1));
+  // Stays mounted after visible turns false, until the sheet has slid out
+  const [shown, setShown] = useState(p.visible);
+  if (p.visible && !shown) setShown(true);
   // iOS can't show an Alert while a Modal is still closing, so the chosen action runs once it has gone
   const pending = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (p.visible) {
-      y.setValue(1);
       Animated.timing(y, { toValue: 0, duration: 320, easing: Easing.bezier(0.32, 0.72, 0, 1), useNativeDriver: true }).start();
+    } else {
+      Animated.timing(y, { toValue: 1, duration: 200, easing: easeOut, useNativeDriver: true }).start(({ finished }) => finished && setShown(false));
     }
   }, [p.visible, y]);
 
@@ -30,9 +35,9 @@ export function ActionSheet(p: { visible: boolean; title: string; actions: Sheet
 
   return (
     <Modal
-      visible={p.visible}
+      visible={shown}
       transparent
-      animationType="fade"
+      animationType="none"
       statusBarTranslucent
       onRequestClose={p.onClose}
       onDismiss={() => {
@@ -40,7 +45,9 @@ export function ActionSheet(p: { visible: boolean; title: string; actions: Sheet
         pending.current = null;
       }}
     >
-      <RNPressable style={s.scrim} onPress={p.onClose} accessibilityLabel={p.cancel} />
+      <Animated.View style={[s.scrim, { opacity: y.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) }]}>
+        <RNPressable style={StyleSheet.absoluteFill} onPress={p.onClose} accessibilityLabel={p.cancel} />
+      </Animated.View>
       {/* A Modal sits outside App's direction setting, so mirror for English here too */}
       <Animated.View style={[s.wrap, { direction: isEn() ? 'rtl' : 'ltr', transform: [{ translateY: y.interpolate({ inputRange: [0, 1], outputRange: [0, 320] }) }] }]}>
         <View style={s.group}>
