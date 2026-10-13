@@ -6,6 +6,7 @@ import UserNotifications
 
 private let braceletUUID = UUID(uuidString: "C4945856-6071-418B-845D-47040C4988CD")!
 private let messagesKey = "nasijBeaconMessages"
+private let checkSeconds = 8.0 // background time after an exit is about 10 s
 
 final class BeaconWatcher: NSObject, CLLocationManagerDelegate {
   static let shared = BeaconWatcher()
@@ -25,7 +26,9 @@ final class BeaconWatcher: NSObject, CLLocationManagerDelegate {
     if messages.isEmpty { return }
     manager.requestAlwaysAuthorization()
     UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-    for mac in messages.keys {
+    // Only new bracelets: starting a region again resets what iOS knows about it
+    let watched = Set(manager.monitoredRegions.map(\.identifier))
+    for mac in messages.keys where !watched.contains(mac) {
       guard let minor = UInt16(mac.suffix(4), radix: 16) else { continue }
       let region = CLBeaconRegion(uuid: braceletUUID, major: 1, minor: minor, identifier: mac)
       region.notifyOnEntry = true
@@ -34,17 +37,41 @@ final class BeaconWatcher: NSObject, CLLocationManagerDelegate {
     }
   }
 
+  // Bracelets whose exit is being double-checked, by minor
+  private var checking: [UInt16: Bool] = [:]
+
+  // iOS sometimes reports an exit with the bracelet right there (often just after the phone locks).
+  // Before warning, listen for the bracelet for checkSeconds; warn only if it is still not heard.
   func locationManager(_ manager: CLLocationManager, didExitRegion region: CLRegion) {
     // While the app is on screen it shows its own "are they with you?" prompt
     guard UIApplication.shared.applicationState != .active,
+          let beacon = region as? CLBeaconRegion, let minor = beacon.minor?.uint16Value,
           let text = (UserDefaults.standard.dictionary(forKey: messagesKey) as? [String: String])?[region.identifier]
     else { return }
+    let constraint = beacon.beaconIdentityConstraint
+    let task = UIApplication.shared.beginBackgroundTask(withName: "nasij-check")
+    checking[minor] = false
+    manager.startRangingBeacons(satisfying: constraint)
+    DispatchQueue.main.asyncAfter(deadline: .now() + checkSeconds) {
+      manager.stopRangingBeacons(satisfying: constraint)
+      let heard = self.checking.removeValue(forKey: minor) ?? true
+      if !heard { self.notify(region.identifier, text) }
+      UIApplication.shared.endBackgroundTask(task)
+    }
+  }
+
+  func locationManager(_ manager: CLLocationManager, didRange beacons: [CLBeacon], satisfying constraint: CLBeaconIdentityConstraint) {
+    for b in beacons where b.proximity != .unknown && checking[b.minor.uint16Value] != nil {
+      checking[b.minor.uint16Value] = true
+    }
+  }
+
+  private func notify(_ id: String, _ text: String) {
     let content = UNMutableNotificationContent()
     content.title = "نسيج"
     content.body = text
     content.sound = .default
-    UNUserNotificationCenter.current().add(
-      UNNotificationRequest(identifier: region.identifier, content: content, trigger: nil))
+    UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
   }
 
   // Back in range: take the warning off the lock screen
