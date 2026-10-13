@@ -340,7 +340,9 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
             else autoReport.current('fall', mac);
           }
 
-          const raw = getZone(t - r.lastSeen, r.smooth, tr.zone);
+          // iOS can wake the app in the background (iBeacon events) while it hears nothing: keep the zone until it is on screen
+          const age = AppState.currentState === 'active' ? t - r.lastSeen : 0;
+          const raw = getZone(age, r.smooth, tr.zone);
           if (raw !== tr.candidate.zone) tr.candidate = { zone: raw, since: t };
           const confirmed = tr.zone === null || raw === 'LOST' || t - tr.candidate.since >= HOLD_MS ? raw : tr.zone;
           if (confirmed !== 'LOST') tr.radius = estimateMetres(r.smooth);
