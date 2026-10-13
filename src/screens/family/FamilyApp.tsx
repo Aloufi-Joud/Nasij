@@ -6,34 +6,37 @@ import { Text, TextInput } from '../../components/Text';
 import { FadeIn, Pressable } from '../../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
 import { State, type Device } from 'react-native-ble-plx';
-import MapView, { Circle, Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { C, ui } from '../../theme';
-import { MAX_AGE, zones, type Gender, type Kind, type Language, type Member, type PasserbyAlert, type Point, type Report, type ReportType } from '../../mock';
+import { zones, type Member, type PasserbyAlert, type Point, type Report, type ReportType } from '../../mock';
 import { metresBetween } from '../../components/geo';
 import { PAIR_RSSI, newPairing, pairStep, type Pairing } from '../../ble/pairing';
 import { listen, onBluetoothState } from '../../ble/scanner';
 import { LOST_AFTER_MS, WINDOW, braceletMac, cleanMac, parseAlarm, summarize, type Signal, type Trend } from '../../ble/signal';
 import { ActionSheet } from '../../components/ActionSheet';
 import { Banner } from '../../components/Banner';
-import { PhotoField, pickPhoto } from '../../components/PhotoField';
+import { pickPhoto } from '../../components/PhotoField';
 import { BottomNav } from '../../components/BottomNav';
 import { Button } from '../../components/Button';
-import { Header, HeaderButton, Pill, type IconName } from '../../components/Header';
-import { latinDigits, minSec } from '../../components/digits';
-import { LanguagePicker } from '../../components/LanguagePicker';
+import { Header, HeaderButton, Pill } from '../../components/Header';
+import { minSec } from '../../components/digits';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { claimBracelet, releaseBracelet } from '../../firebase/bracelets';
 import { deleteMember, loadMembers, saveMember } from '../../firebase/members';
-import { changeEmail, changePassword, confirmPassword, loadProfile, saveProfile, type Profile } from '../../firebase/profile';
+import { loadProfile, type Profile } from '../../firebase/profile';
 import { closeReport, createReport, getHandoverCode, loadMyOpenReports, subscribeReport } from '../../firebase/reports';
 import { subscribeLastSeen, type LastSeen } from '../../firebase/sightings';
 import { answerPasserbyAlert, subscribePasserbyAlert } from '../../firebase/passerby';
 import { areaOf } from '../../firebase/volunteers';
 import FoundScreen from './FoundScreen';
 import LostScreen from './LostScreen';
-import { isEn, langName, toggleLang, tr, place } from '../../i18n';
+import AccountScreen from './AccountScreen';
+import AlertsScreen from './AlertsScreen';
+import MapScreen from './MapScreen';
+import MemberForm from './MemberForm';
+import { EMPTY, EVENT_RADIUS_M, KIND_UI, ZONE_UI, failed, formError, offset, type FamMember, type Form, type Live, type LogItem, type LogKind, type Zone } from './shared';
+import { langName, tr, place } from '../../i18n';
 
 const NEAR = -65;           // stronger than this = near
 const FAR = -80;            // weaker than this = far
@@ -42,35 +45,11 @@ const GAP = 4;              // extra margin needed to leave NEAR or FAR
 const TX_AT_1M = -59;       // average signal at 1 metre (calibrate with the laptop scanner)
 const PATH_LOSS = 2.5;      // how fast the signal fades (2 = open air, 3 = crowded)
 const PAIR_TIMEOUT_MS = 60000; // linking gives up waiting for the press after 1 minute
-// ponytail: event boundary = circle around the family's first location, so it can be tested anywhere.
-// Phase 2: the real event boundary from Firestore.
-const EVENT_RADIUS_M = 150;
 
-type Zone = 'NEAR' | 'MEDIUM' | 'FAR' | 'LOST';
-type LogKind = Zone | 'SOS' | 'FALL' | 'REPORT' | 'FOUND' | 'EDGE' | 'CANCELLED';
 // An emergency press waits this long before it reaches volunteers, so the family can cancel a press by mistake
 const SOS_DELAY_MS = 15_000;
 type PairView = { memberId: string; mac: string; heard: boolean; near: boolean; timedOut: boolean };
 type AlertKind = 'SOS' | 'FALL';
-
-// A member as the family edits it (age and phone as typed), plus the linked bracelet
-type Form = {
-  name: string; kind: Kind; gender: Gender; age: string; language: Language;
-  phone: string; description: string; condition: string; notes: string;
-  photo: string | null; // today's clothes: on this phone only (never in members/), sent with a report
-};
-type FamMember = Form & { id: string; mac: string | null };
-const EMPTY: Form = {
-  name: '', kind: 'child', gender: 'male', age: '', language: 'ar', phone: '', description: '', condition: '', notes: '', photo: null,
-};
-const KIND_UI: Record<Kind, { label: string; color: string }> = {
-  child: { get label() { return tr('طفل', 'Child'); }, color: C.child },
-  elder: { get label() { return tr('كبير سن', 'Elderly'); }, color: C.elder },
-};
-const GENDER_UI: Record<Gender, string> = {
-  get male() { return tr('ذكر', 'Male'); },
-  get female() { return tr('أنثى', 'Female'); },
-};
 
 // Older member documents miss the newer fields
 const fromDoc = (m: Member): FamMember => ({
@@ -84,33 +63,8 @@ const toDoc = (m: Form & { id?: string; mac: string | null }) => ({
   health: m.condition ? { condition: m.condition, notes: m.notes } : null, braceletId: m.mac,
 });
 
-// What stops the form from saving, or null. A child needs a parent's phone: the volunteer calls it.
-function formError(f: Form): string | null {
-  if (!f.name.trim()) return tr('اكتب الاسم', 'Enter the name');
-  if (!f.age) return tr('اكتب العمر', 'Enter the age');
-  if (Number(f.age) > MAX_AGE[f.kind])
-    return tr(`العمر لازم يكون ${MAX_AGE[f.kind]} سنة أو أقل لـ${KIND_UI[f.kind].label}`, `Age must be ${MAX_AGE[f.kind]} or under for ${KIND_UI[f.kind].label.toLowerCase()}`);
-  if (f.kind === 'child' && !f.phone) return tr('اكتب رقم جوال ولي الأمر', 'Enter the guardian’s phone number');
-  if (f.phone && !/^\d{9,15}$/.test(f.phone)) return tr('رقم الجوال غير صحيح', 'Invalid phone number');
-  return null;
-}
-
-const ZONE_UI: Record<LogKind, { label: string; color: string }> = {
-  SOS: { get label() { return tr('طلب مساعدة', 'Help request'); }, color: C.danger },
-  CANCELLED: { get label() { return tr('ألغيت طلب المساعدة: ضغطة بالغلط', 'Help request cancelled: pressed by mistake'); }, color: C.muted },
-  FALL: { get label() { return tr('احتمال سقوط', 'Possible fall'); }, color: C.danger },
-  REPORT: { get label() { return tr('بلاغ للمتطوعين', 'Reported to volunteers'); }, color: C.danger },
-  FOUND: { get label() { return tr('انقفل البلاغ', 'Report closed'); }, color: C.safe },
-  EDGE: { get label() { return tr('قرب حدود الفعالية', 'Near the event edge'); }, color: C.danger },
-  NEAR: { get label() { return tr('قريب منك', 'Close to you'); }, color: C.safe },
-  MEDIUM: { get label() { return tr('مسافة متوسطة', 'Medium distance'); }, color: C.warn },
-  FAR: { get label() { return tr('بعيد عنك', 'Far from you'); }, color: C.danger },
-  LOST: { get label() { return tr('انقطعت الإشارة', 'Signal lost'); }, color: C.danger },
-};
 // A passer-by report older than this no longer asks the family (it may be from an earlier visit)
 const ALERT_FRESH_MS = 15 * 60_000;
-
-const failed = (title: string) => Alert.alert(title, tr('تأكد من الاتصال بالإنترنت وحاول مرة ثانية.', 'Check your internet connection and try again.'));
 
 const TREND_UI: Record<Trend, string> = {
   get approaching() { return tr('يقترب منك', 'Coming closer'); },
@@ -143,8 +97,6 @@ type Track = {
 const newTrack = (): Track => ({
   history: [], latest: null, alarm: {}, lastCount: {}, wasTriggered: {}, zone: null, candidate: { zone: null, since: 0 }, radius: 10, edge: false,
 });
-// What the screen shows per bracelet, copied from the tracks twice a second
-type Live = { signal: Signal | null; zone: Zone | null; radius: number; edge: boolean };
 
 // Linked bracelets this visit, by number (MAC), and phone-side ids already matched to one
 const tracks: Record<string, Track> = {};
@@ -166,15 +118,6 @@ function forget(mac: string) {
   for (const [id, m] of knownIds) if (m === mac) knownIds.delete(id);
 }
 
-// The point `metres` away from p in direction `deg` (0 = north), for the name on each circle's edge
-function offset(p: Point, metres: number, deg: number): Point {
-  const rad = (deg * Math.PI) / 180;
-  return {
-    latitude: p.latitude + (metres * Math.cos(rad)) / 111_320,
-    longitude: p.longitude + (metres * Math.sin(rad)) / (111_320 * Math.cos((p.latitude * Math.PI) / 180)),
-  };
-}
-
 function getZone(ageMs: number, smooth: number, current: Zone | null): Zone {
   if (ageMs > LOST_AFTER_MS) return 'LOST';
   // Stay in NEAR / FAR until the signal clearly crosses back
@@ -191,30 +134,16 @@ function estimateMetres(smooth: number) {
   return Math.max(2, Math.min(60, Math.round(d)));
 }
 
-const CIRCLE_FILL: Record<Zone, string> = {
-  NEAR: 'rgba(27,107,58,0.16)',
-  MEDIUM: 'rgba(212,132,26,0.16)',
-  FAR: 'rgba(192,57,43,0.16)',
-  LOST: 'rgba(192,57,43,0.10)',
-};
-
 type Tab = 'home' | 'map' | 'alerts' | 'profile';
 type Screen = { kind: 'lost' | 'found'; memberId: string } | null;
 
-// Firebase Auth errors as the guardian should read them
-const authError = (e: any) =>
-  e.code === 'auth/invalid-credential' || e.code === 'auth/wrong-password' ? tr('كلمة المرور غير صحيحة', 'Wrong password')
-  : e.code === 'auth/email-already-in-use' ? tr('هذا الإيميل مستخدم في حساب ثاني', 'That email is used by another account')
-  : e.code === 'auth/invalid-email' ? tr('اكتب إيميل صحيح', 'Enter a valid email')
-  : e.code === 'auth/requires-recent-login' ? tr('ادخل كلمة المرور القديمة من جديد', 'Enter your old password again')
-  : e.code === 'auth/too-many-requests' ? tr('محاولات كثيرة، حاول بعد قليل', 'Too many attempts, try again shortly')
-  : e.code === 'auth/network-request-failed' ? tr('لا يوجد اتصال بالإنترنت', 'No internet connection')
-  : tr('تعذر التغيير، حاول مرة أخرى', 'Couldn’t change it, try again');
-
-// shown: false while the volunteer side is open (this side stays mounted but hidden); full-screen notices wait for it
-export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { shown?: boolean; onSwitchRole: () => void; onLogout: () => void }) {
+// shown: false while the demo account has the volunteer side open (this side stays mounted but hidden); full-screen notices wait for it.
+// onSwitchRole: demo account only
+export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { shown?: boolean; onSwitchRole?: () => void; onLogout: () => void }) {
   const [bt, setBt] = useState<string>('');
-  const [log, setLog] = useState<{ time: string; kind: LogKind; who: string }[]>([]);
+  const [log, setLog] = useState<LogItem[]>([]);
+  // Alerts added since the alerts tab was last open: the number on the bell
+  const [unread, setUnread] = useState(0);
   const [sos, setSos] = useState<{ kind: AlertKind; who: string; mac: string } | null>(null);
   // Emergency presses waiting to go to volunteers: bracelet → time it will be sent
   const pendingSos = useRef<Record<string, number>>({});
@@ -225,18 +154,9 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
   const [editing, setEditing] = useState<string | null>('new');
   const [draft, setDraft] = useState<Form>(EMPTY);
   const [saving, setSaving] = useState(false);
-  // The account holder: saved profile, and the copy being edited on the profile tab
+  // The account holder's saved name and phone (edited on the account tab)
   const [profile, setProfile] = useState<Profile>({ name: '', phone: '' });
-  const [profileDraft, setProfileDraft] = useState<Profile>({ name: '', phone: '' });
-  const [profileSaved, setProfileSaved] = useState(false);
-  // Changing the sign-in email: the new email, the current password, and the result line
-  const [login, setLogin] = useState(() => ({ current: '', email: auth.currentUser?.email ?? '' }));
-  const [loginMsg, setLoginMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [loginBusy, setLoginBusy] = useState(false);
-  // Changing the password: form open, old password, and the new one twice
-  const [pw, setPw] = useState({ open: false, old: '', next: '', again: '' });
-  const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [pwBusy, setPwBusy] = useState(false);
+  const [profileLoaded, setProfileLoaded] = useState(false);
   // Open reports per member id, kept live from Firestore
   const [reports, setReports] = useState<Record<string, Report>>({});
   // Handover code per member id: the volunteer asks for it before handing them over
@@ -296,8 +216,10 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
     return () => watch?.remove();
   }, []);
 
-  const addLog = (kind: LogKind, who: string) =>
+  const addLog = (kind: LogKind, who: string) => {
     setLog((old) => [{ time: new Date().toLocaleTimeString(), kind, who }, ...old].slice(0, 30));
+    setUnread((n) => n + 1);
+  };
 
   useEffect(() => {
     const nameOf = (mac: string) => membersRef.current.find((m) => m.mac === mac)?.name ?? '';
@@ -437,82 +359,12 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
     loadProfile()
       .then((p) => {
         setProfile(p);
-        setProfileDraft(p);
+        setProfileLoaded(true);
         // New members start with the guardian's phone
         setDraft((d) => (d.phone ? d : { ...d, phone: p.phone }));
       })
       .catch(() => {});
   }, []);
-  const profileError = !profileDraft.name.trim()
-    ? tr('اكتب اسمك', 'Enter your name')
-    : !/^\d{9,15}$/.test(profileDraft.phone)
-      ? tr('اكتب رقم جوال صحيح', 'Enter a valid phone number')
-      : null;
-  const profileDirty = profileDraft.name.trim() !== profile.name || profileDraft.phone !== profile.phone;
-  const newEmail = login.email.trim().toLowerCase();
-  const loginDirty = newEmail !== (auth.currentUser?.email ?? '').toLowerCase();
-  const loginError = !loginDirty
-    ? null
-    : !/^\S+@\S+\.\S+$/.test(newEmail)
-      ? tr('اكتب إيميل صحيح', 'Enter a valid email')
-      : !login.current
-        ? tr('اكتب كلمة المرور الحالية', 'Enter your current password')
-        : null;
-  const saveLogin = async () => {
-    if (loginError) return;
-    setLoginBusy(true);
-    setLoginMsg(null);
-    try {
-      await changeEmail(login.current, newEmail);
-      setLogin({ current: '', email: auth.currentUser?.email ?? '' });
-      setLoginMsg({ ok: true, text: tr(`أرسلنا رابط تأكيد إلى ${newEmail}، يتغير الإيميل بعد ما تفتحه`, `We sent a confirmation link to ${newEmail}. The email changes once you open it`) });
-    } catch (e: any) {
-      setLoginMsg({ ok: false, text: authError(e) });
-    } finally {
-      setLoginBusy(false);
-    }
-  };
-  const saveDetails = () => {
-    if (profileDirty) saveMyProfile();
-    if (loginDirty) saveLogin();
-  };
-  const detailsBlocked = loginBusy || (!profileDirty && !loginDirty) || (profileDirty && !!profileError) || (loginDirty && !!loginError);
-
-  const pwError = pw.next.length < 6
-    ? tr('كلمة المرور ٦ أحرف أو أكثر', 'Password needs 6 characters or more')
-    : pw.next !== pw.again
-      ? tr('كلمتا المرور غير متطابقتين', 'Passwords don’t match')
-      : null;
-  const saveNewPassword = async () => {
-    if (pwError || !pw.old) return;
-    setPwBusy(true);
-    setPwMsg(null);
-    try {
-      await confirmPassword(pw.old);
-      await changePassword(pw.next);
-      setPw({ open: false, old: '', next: '', again: '' });
-      setPwMsg({ ok: true, text: tr('تغيّرت كلمة المرور', 'Password changed') });
-    } catch (e: any) {
-      setPwMsg({ ok: false, text: authError(e) });
-    } finally {
-      setPwBusy(false);
-    }
-  };
-  const closePw = () => {
-    setPw({ open: false, old: '', next: '', again: '' });
-    setPwMsg(null);
-  };
-  const saveMyProfile = () => {
-    if (profileError) return;
-    const p = { name: profileDraft.name.trim(), phone: profileDraft.phone };
-    setProfile(p);
-    setProfileSaved(true);
-    saveProfile(p).catch(() => {
-      setProfileSaved(false);
-      failed(tr('تعذر حفظ بياناتك', 'Couldn’t save your details'));
-    });
-  };
-
   // The members saved on this account come back after login, with their bracelets and open reports.
   // A report whose member is gone, or an older second report for the same member, is closed:
   // otherwise volunteers keep searching for a bracelet that may now be on someone else.
@@ -812,163 +664,6 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
   });
   const foundAlert = foundMember?.mac ? alerts[foundMember.mac] : null;
   const foundArea = foundAlert ? areaOf(foundAlert.location) : '';
-  const draftError = formError(draft);
-
-  const renderMap = (height: number) => (
-    <View style={[s.mapBox, { height }]}>
-      {me ? (
-        <MapView
-          style={StyleSheet.absoluteFill}
-          showsUserLocation
-          initialRegion={{ ...me, latitudeDelta: 0.0004, longitudeDelta: 0.0004 }}
-        >
-          {eventCenter && (
-            <Circle
-              center={eventCenter}
-              radius={EVENT_RADIUS_M}
-              strokeColor={C.primary}
-              strokeWidth={2}
-              lineDashPattern={[8, 6]}
-              fillColor="transparent"
-            />
-          )}
-          {/* One circle per bracelet, all around the parent (the signal gives distance, not direction),
-              with the member's name on its edge. Names sit at different angles so equal circles do not hide each other. */}
-          {members.map((m, i) => {
-            const l = liveOf(m);
-            if (!l?.zone) return null;
-            const color = ZONE_UI[l.zone].color;
-            return [
-              <Circle key={`c-${m.id}`} center={me} radius={l.radius} strokeColor={color} strokeWidth={2} fillColor={CIRCLE_FILL[l.zone]} />,
-              <Marker key={`n-${m.id}`} coordinate={offset(me, l.radius, (i * 70) % 360)} anchor={{ x: 0.5, y: 0.5 }}>
-                <View style={[s.mapName, { borderColor: color }]}>
-                  <Text style={[s.mapNameText, { color }]}>{m.name}</Text>
-                </View>
-              </Marker>,
-            ];
-          })}
-        </MapView>
-      ) : (
-        <Text style={s.mapWait}>{tr('جاري تحديد موقعك...', 'Finding your location...')}</Text>
-      )}
-    </View>
-  );
-
-  const renderForm = () => {
-    const old = members.find((m) => m.id === editing);
-    const chips = <T extends string>(options: Record<T, string>, value: T, set: (v: T) => void) => (
-      <View style={[s.chips, { flexWrap: 'wrap' }]}>
-        {(Object.keys(options) as T[]).map((k) => (
-          <Pressable
-            key={k}
-            onPress={() => set(k)}
-            style={[s.chip, value === k && { backgroundColor: C.primary, borderColor: C.primary }]}
-          >
-            <Text style={[s.chipText, value === k && { color: '#fff' }]}>{options[k]}</Text>
-          </Pressable>
-        ))}
-      </View>
-    );
-    return (
-      <View style={[ui.card, { marginBottom: 14 }]}>
-        <Text style={s.formTitle}>{old ? tr(`تعديل بيانات ${old.name}`, `Edit ${old.name}`) : tr('أضف فردًا من العائلة', 'Add a family member')}</Text>
-
-        <Text style={s.label}>{tr('الاسم', 'Name')}</Text>
-        <TextInput
-          style={s.input}
-          value={draft.name}
-          maxLength={60}
-          onChangeText={(name) => setDraft({ ...draft, name })}
-          placeholder={tr('مثلًا: سنا', 'e.g. Sana')}
-          placeholderTextColor={C.faint}
-          textAlign="right"
-        />
-
-        <Text style={s.label}>{tr('النوع', 'Type')}</Text>
-        {chips({ child: KIND_UI.child.label, elder: KIND_UI.elder.label }, draft.kind, (kind) => setDraft({ ...draft, kind }))}
-
-        <Text style={s.label}>{tr('الجنس', 'Gender')}</Text>
-        {chips(GENDER_UI, draft.gender, (gender) => setDraft({ ...draft, gender }))}
-
-        <Text style={s.label}>{tr('العمر', 'Age')}</Text>
-        <TextInput
-          style={s.input}
-          value={draft.age}
-          onChangeText={(age) => setDraft({ ...draft, age: latinDigits(age).slice(0, 3) })}
-          placeholder={draft.kind === 'child' ? tr(`من 0 إلى ${MAX_AGE.child}`, `0 to ${MAX_AGE.child}`) : tr(`حتى ${MAX_AGE.elder}`, `up to ${MAX_AGE.elder}`)}
-          placeholderTextColor={C.faint}
-          keyboardType="number-pad"
-          textAlign="right"
-        />
-
-        <Text style={s.label}>{tr('لغته', 'Their language')}</Text>
-        <LanguagePicker selected={[draft.language]} onPick={(language) => setDraft({ ...draft, language })} />
-        <Text style={[s.hint, { marginTop: 6 }]}>{tr('المتطوع اللي يتكلم لغته يوصله البلاغ أول', 'A volunteer who speaks their language gets the report first')}</Text>
-
-        <Text style={s.label}>{draft.kind === 'child' ? tr('رقم جوال ولي الأمر', 'Guardian’s phone') : tr('رقم جوال للتواصل (اختياري)', 'Contact phone (optional)')}</Text>
-        <TextInput
-          style={s.input}
-          value={draft.phone}
-          maxLength={20}
-          onChangeText={(phone) => setDraft({ ...draft, phone: latinDigits(phone).slice(0, 15) })}
-          placeholder="05XXXXXXXX"
-          placeholderTextColor={C.faint}
-          keyboardType="phone-pad"
-          textAlign="right"
-        />
-        <Text style={[s.hint, { marginTop: 6 }]}>{tr('يشوفه المتطوع اللي يستلم البلاغ بس، عشان يتواصل معكم مباشرة', 'Only the volunteer who takes the report sees it, to reach you directly')}</Text>
-
-        <Text style={s.label}>{tr('كيف يتعرف عليه المتطوع؟ (اختياري)', 'How can a volunteer recognise them? (optional)')}</Text>
-        <TextInput
-          style={[s.input, { minHeight: 70 }]}
-          value={draft.description}
-          maxLength={300}
-          onChangeText={(description) => setDraft({ ...draft, description })}
-          placeholder={tr('مثلًا: ثوب أبيض وشماغ أحمر، يمشي بعكاز', 'e.g. white thobe, red shemagh, walks with a cane')}
-          placeholderTextColor={C.faint}
-          multiline
-          textAlign="right"
-          textAlignVertical="top"
-        />
-
-        <Text style={s.label}>{tr('صورة بملابسه اليوم (اختياري، ننصح فيها)', 'Photo in today’s clothes (optional, recommended)')}</Text>
-        <PhotoField value={draft.photo} onChange={(photo) => setDraft({ ...draft, photo })} />
-        <Text style={s.hint}>{tr('تبقى في جوالك بس، وما تنرسل إلا مع البلاغ للمتطوع اللي يستلمه', 'Stays on your phone, only sent with a report to the volunteer who takes it')}</Text>
-
-        <Text style={s.label}>{tr('حالة صحية (اختياري)', 'Health condition (optional)')}</Text>
-        <TextInput
-          style={s.input}
-          value={draft.condition}
-          maxLength={100}
-          onChangeText={(condition) => setDraft({ ...draft, condition })}
-          placeholder={tr('مثلًا: ربو، سكري', 'e.g. asthma, diabetes')}
-          placeholderTextColor={C.faint}
-          textAlign="right"
-        />
-        {!!draft.condition.trim() && (
-          <>
-            <Text style={s.label}>{tr('وش لازم يسوي المتطوع؟', 'What should the volunteer do?')}</Text>
-            <TextInput
-              style={[s.input, { minHeight: 70 }]}
-              value={draft.notes}
-              maxLength={300}
-              onChangeText={(notes) => setDraft({ ...draft, notes })}
-              placeholder={tr('مثلًا: البخاخ في الجيب الأمامي لشنطته', 'e.g. inhaler in the front pocket of their bag')}
-              placeholderTextColor={C.faint}
-              multiline
-              textAlign="right"
-              textAlignVertical="top"
-            />
-          </>
-        )}
-        <Text style={[s.hint, { marginTop: 6 }]}>{tr('تظهر لمتطوع واحد بس وقت البلاغ، وتنحذف لما ينقفل', 'Shown to one volunteer only during a report, deleted when it closes')}</Text>
-
-        {!!draftError && !!draft.name.trim() && <Text style={s.formError}>{draftError}</Text>}
-        <Button label={saving ? tr('جارٍ الحفظ…', 'Saving…') : tr('حفظ', 'Save')} onPress={saveDraft} disabled={!!draftError || saving} style={{ marginTop: 12 }} />
-        {members.length > 0 && <Button label={tr('إلغاء', 'Cancel')} kind="ghost" onPress={() => setEditing(null)} style={{ marginTop: 10 }} />}
-      </View>
-    );
-  };
 
   const renderLink = (m: FamMember) => {
     const pv = pairView?.memberId === m.id ? pairView : null;
@@ -1049,6 +744,8 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
   };
 
   const formOpen = !screen && tab === 'home' && !!editing;
+  // Seeing the alerts tab reads them all, including ones that arrive while it is open
+  if (!screen && tab === 'alerts' && unread) setUnread(0);
   const [mapSeen, setMapSeen] = useState(false);
   if (tab === 'map' && !mapSeen) setMapSeen(true);
   // A new page starts at the top, wherever the list was scrolled to
@@ -1192,18 +889,6 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
     );
   };
 
-  // One row of the account settings list
-  const settingRow = (icon: IconName, label: string, onPress: () => void, o: { value?: string; divider?: boolean } = {}) => (
-    <Pressable style={[s.setRow, o.divider && s.setDivider]} onPress={onPress}>
-      <View style={s.setIcon}>
-        <Ionicons name={icon} size={18} color={C.primary} />
-      </View>
-      <Text style={s.setLabel}>{label}</Text>
-      {!!o.value && <Text style={s.setValue}>{o.value}</Text>}
-      <Ionicons name={isEn() ? 'chevron-forward' : 'chevron-back'} size={16} color={C.faint} />
-    </Pressable>
-  );
-
   return (
     <View style={s.screen}>
       <Header
@@ -1211,8 +896,8 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
         title={tr('عائلتي', 'My family')}
         actions={
           <>
-            <HeaderButton icon="notifications-outline" label={tr('التنبيهات', 'Alerts')} badge={log.length} onPress={() => setTab('alerts')} />
-            <HeaderButton icon="swap-horizontal" label={tr('تبديل إلى متطوع', 'Switch to volunteer')} onPress={onSwitchRole} />
+            <HeaderButton icon="notifications-outline" label={tr('التنبيهات', 'Alerts')} badge={unread} onPress={() => setTab('alerts')} />
+            {onSwitchRole && <HeaderButton icon="swap-horizontal" label={tr('تبديل إلى متطوع', 'Switch to volunteer')} onPress={onSwitchRole} />}
             <HeaderButton icon="exit-outline" label={tr('إنهاء الزيارة', 'End visit')} onPress={endVisit} />
           </>
         }
@@ -1405,8 +1090,8 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
 
         {btOff && <Banner tone="danger" icon="bluetooth" text={tr('شغّلي البلوتوث عشان نتابع الأساور', 'Turn on Bluetooth so we can track the bracelets')} />}
 
-        {/* Screens, the form and tab switches fade and lift in, the same as the volunteer side */}
-        <FadeIn key={screen?.kind ?? (formOpen ? 'form' : tab)}>
+        {/* Screens and the form fade and lift in; tab switches (tapped all day) only fade */}
+        <FadeIn key={screen?.kind ?? (formOpen ? 'form' : tab)} quick={!screen && !formOpen}>
         {screen?.kind === 'lost' && screenMember && (
           <LostScreen
             name={screenMember.name}
@@ -1421,17 +1106,15 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
           <FoundScreen name={screenMember.name} onConfirm={() => confirmFound(screenMember.id)} onCancel={() => setScreen(null)} />
         )}
 
-        {/* Adding or editing a member is its own page, not a card inside the list */}
         {formOpen && (
-          <>
-            {members.length > 0 && (
-              <Pressable style={s.back} hitSlop={8} onPress={() => setEditing(null)}>
-                <Ionicons name={isEn() ? 'arrow-back' : 'arrow-forward'} size={18} color={C.accent} />
-                <Text style={s.backText}>{tr('أفراد العائلة', 'Family members')}</Text>
-              </Pressable>
-            )}
-            {renderForm()}
-          </>
+          <MemberForm
+            draft={draft}
+            onChange={setDraft}
+            editingName={members.find((m) => m.id === editing)?.name ?? null}
+            saving={saving}
+            onSave={saveDraft}
+            onCancel={members.length > 0 ? () => setEditing(null) : null}
+          />
         )}
 
         {!screen && tab === 'home' && !editing && (
@@ -1487,244 +1170,24 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
 
 
         {!screen && tab === 'profile' && (
-          <>
-            {/* Who is signed in */}
-            <View style={[ui.card, s.meCard]}>
-              <View style={s.meAvatar}>
-                <Text style={s.meAvatarText}>{profile.name.trim().charAt(0) || '؟'}</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={s.memberName} numberOfLines={1}>{profile.name || tr('ولي الأمر', 'Guardian')}</Text>
-                <Text style={s.memberRole} numberOfLines={1}>{auth.currentUser?.email ?? ''}</Text>
-              </View>
-            </View>
-
-            {!profile.phone && (
-              <Banner tone="warn" icon="call-outline" text={tr('أضف رقم جوالك عشان يتواصل معك المتطوع', 'Add your phone so a volunteer can reach you')} />
-            )}
-
-            <View style={s.stats}>
-              {[
-                { n: members.length, label: tr('أفراد', 'Members'), color: C.primary },
-                { n: activeCount, label: tr('أساور نشطة', 'Active bracelets'), color: C.safe },
-                { n: openCount, label: tr('بلاغات مفتوحة', 'Open reports'), color: openCount ? C.danger : C.faint },
-              ].map((x) => (
-                <View key={x.label} style={s.stat}>
-                  <Text style={[s.statNum, { color: x.color }]}>{x.n}</Text>
-                  <Text style={s.statLabel} numberOfLines={1}>{x.label}</Text>
-                </View>
-              ))}
-            </View>
-
-            <>
-              <Text style={ui.caption}>{tr('بياناتي', 'My details')}</Text>
-              <View style={ui.card}>
-                <Text style={[s.label, { marginTop: 0 }]}>{tr('اسمك', 'Your name')}</Text>
-                <TextInput
-                  style={s.input}
-                  value={profileDraft.name}
-                  maxLength={60}
-                  onChangeText={(name) => {
-                    setProfileDraft({ ...profileDraft, name });
-                    setProfileSaved(false);
-                  }}
-                  placeholder={tr('مثلًا: أبو سنا', 'e.g. Sana’s dad')}
-                  placeholderTextColor={C.faint}
-                  textAlign="right"
-                />
-
-                <Text style={s.label}>{tr('رقم جوالك', 'Your phone')}</Text>
-                <TextInput
-                  style={s.input}
-                  value={profileDraft.phone}
-                  maxLength={20}
-                  onChangeText={(phone) => {
-                    setProfileDraft({ ...profileDraft, phone: latinDigits(phone).slice(0, 15) });
-                    setProfileSaved(false);
-                  }}
-                  placeholder="05XXXXXXXX"
-                  placeholderTextColor={C.faint}
-                  keyboardType="phone-pad"
-                  textAlign="right"
-                />
-
-                <Text style={s.label}>{tr('الإيميل', 'Email')}</Text>
-                <TextInput
-                  style={s.input}
-                  value={login.email}
-                  onChangeText={(email) => {
-                    setLogin({ ...login, email });
-                    setLoginMsg(null);
-                  }}
-                  placeholder="name@example.com"
-                  placeholderTextColor={C.faint}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  autoComplete="email"
-                  textAlign="right"
-                />
-
-                {/* Firebase asks for the current password before the email can change */}
-                {loginDirty && (
-                  <>
-                    <Text style={s.label}>{tr('كلمة المرور الحالية', 'Current password')}</Text>
-                    <TextInput
-                      style={s.input}
-                      value={login.current}
-                      onChangeText={(current) => {
-                        setLogin({ ...login, current });
-                        setLoginMsg(null);
-                      }}
-                      secureTextEntry
-                      autoCapitalize="none"
-                      autoComplete="current-password"
-                      textAlign="right"
-                    />
-                  </>
-                )}
-
-                {!!profileError && !!profileDraft.name.trim() && <Text style={s.formError}>{profileError}</Text>}
-                {!!loginError && !!newEmail && <Text style={s.hint}>{loginError}</Text>}
-                {loginMsg && !loginMsg.ok && <Text style={s.formError}>{loginMsg.text}</Text>}
-                {!profileDirty && !loginDirty && (profileSaved || !!loginMsg?.ok) ? (
-                  <View style={s.savedRow}>
-                    <Ionicons name="checkmark-circle" size={18} color={C.safe} />
-                    <Text style={[s.saved, { marginTop: 0, flexShrink: 1 }]}>{loginMsg?.ok ? loginMsg.text : tr('انحفظت بياناتك', 'Your details are saved')}</Text>
-                  </View>
-                ) : (
-                  <Button label={loginBusy ? tr('جارٍ الحفظ…', 'Saving…') : tr('حفظ', 'Save')} onPress={saveDetails} disabled={detailsBlocked} style={{ marginTop: 14 }} />
-                )}
-
-                {/* Password: its own button, old password first, then the new one twice */}
-                <View style={s.pwBox}>
-                  {!pw.open ? (
-                    <>
-                      {pwMsg?.ok && (
-                        <View style={[s.savedRow, { marginTop: 0, marginBottom: 10 }]}>
-                          <Ionicons name="checkmark-circle" size={18} color={C.safe} />
-                          <Text style={[s.saved, { marginTop: 0 }]}>{pwMsg.text}</Text>
-                        </View>
-                      )}
-                      <Button
-                        label={tr('تغيير كلمة المرور', 'Change password')}
-                        icon="key-outline"
-                        kind="ghost"
-                        onPress={() => {
-                          setPw({ ...pw, open: true });
-                          setPwMsg(null);
-                        }}
-                      />
-                    </>
-                  ) : (
-                    <>
-                      <>
-                          <Text style={[s.label, { marginTop: 0 }]}>{tr('كلمة المرور القديمة', 'Old password')}</Text>
-                          <TextInput
-                            style={s.input}
-                            value={pw.old}
-                            onChangeText={(old) => {
-                              setPw({ ...pw, old });
-                              setPwMsg(null);
-                            }}
-                            secureTextEntry
-                            autoCapitalize="none"
-                            autoComplete="current-password"
-                            textAlign="right"
-                          />
-                          <Text style={s.label}>{tr('كلمة المرور الجديدة', 'New password')}</Text>
-                          <TextInput
-                            style={s.input}
-                            value={pw.next}
-                            onChangeText={(next) => {
-                              setPw({ ...pw, next });
-                              setPwMsg(null);
-                            }}
-                            secureTextEntry
-                            autoCapitalize="none"
-                            autoComplete="new-password"
-                            textAlign="right"
-                          />
-                          <Text style={s.label}>{tr('أكّد كلمة المرور الجديدة', 'Confirm new password')}</Text>
-                          <TextInput
-                            style={s.input}
-                            value={pw.again}
-                            onChangeText={(again) => {
-                              setPw({ ...pw, again });
-                              setPwMsg(null);
-                            }}
-                            secureTextEntry
-                            autoCapitalize="none"
-                            autoComplete="new-password"
-                            textAlign="right"
-                          />
-                          {!!pwError && !!pw.again && <Text style={s.hint}>{pwError}</Text>}
-                      </>
-                      {pwMsg && !pwMsg.ok && <Text style={s.formError}>{pwMsg.text}</Text>}
-                      <View style={s.pwActions}>
-                        <Button
-                          label={pwBusy ? tr('لحظة…', 'One moment…') : tr('غيّر كلمة المرور', 'Change password')}
-                          onPress={saveNewPassword}
-                          disabled={pwBusy || !pw.old || !!pwError}
-                          style={{ flex: 1 }}
-                        />
-                        <Button label={tr('إلغاء', 'Cancel')} kind="ghost" onPress={closePw} style={{ flex: 1 }} />
-                      </View>
-                    </>
-                  )}
-                </View>
-              </View>
-            </>
-
-            <>
-              <Text style={ui.caption}>{tr('الإعدادات', 'Settings')}</Text>
-              <View style={[ui.card, { paddingVertical: 4 }]}>
-                {settingRow('language-outline', tr('لغة التطبيق', 'App language'), toggleLang, { value: tr('العربية', 'English') })}
-                {settingRow('swap-horizontal', tr('التبديل إلى متطوع', 'Switch to volunteer'), onSwitchRole, { divider: true })}
-                <Pressable style={[s.setRow, s.setDivider]} onPress={endVisit}>
-                  <View style={[s.setIcon, { backgroundColor: C.dangerBg }]}>
-                    <Ionicons name="exit-outline" size={18} color={C.danger} />
-                  </View>
-                  <Text style={[s.setLabel, { color: C.danger }]}>{tr('إنهاء الزيارة', 'End visit')}</Text>
-                </Pressable>
-              </View>
-            </>
-          </>
+          <AccountScreen
+            key={profileLoaded ? 'loaded' : 'loading'} // the form starts from the saved details once they arrive
+            profile={profile}
+            onSaved={setProfile}
+            memberCount={members.length}
+            activeCount={activeCount}
+            openCount={openCount}
+            onSwitchRole={onSwitchRole}
+            onEndVisit={endVisit}
+          />
         )}
 
-        {!screen && tab === 'alerts' && (
-          <>
-            <Text style={ui.sectionTitle}>{tr('التنبيهات', 'Alerts')}</Text>
-            {log.length === 0 && <Text style={s.empty}>{tr('لا توجد تنبيهات بعد', 'No alerts yet')}</Text>}
-            {log.map((item, i) => (
-              <View key={i} style={s.logRow}>
-                <View style={[s.logDot, { backgroundColor: ZONE_UI[item.kind].color }]} />
-                <Text style={[s.logLabel, { color: ZONE_UI[item.kind].color }]}>
-                  {item.who ? `${item.who}: ` : ''}
-                  {ZONE_UI[item.kind].label}
-                </Text>
-                <Text style={s.logTime}>{item.time}</Text>
-              </View>
-            ))}
-          </>
-        )}
+        {!screen && tab === 'alerts' && <AlertsScreen log={log} />}
         </FadeIn>
         {/* The map stays mounted once opened and is only hidden, so it does not rebuild on every visit */}
         {mapSeen && (
           <View style={{ display: !screen && tab === 'map' ? 'flex' : 'none' }}>
-            <Text style={ui.sectionTitle}>{tr('خريطة العائلة', 'Family map')}</Text>
-            {renderMap(420)}
-            {members.map((m) => {
-              const l = liveOf(m);
-              if (!l?.zone) return null;
-              return (
-                <Text key={m.id} style={s.mapNote}>
-                  {l.zone === 'LOST'
-                    ? tr(`${m.name}: آخر مرة كان ضمن ${l.radius} متر منك تقريبًا`, `${m.name}: last seen within about ${l.radius} m of you`)
-                    : tr(`${m.name} ضمن ${l.radius} متر منك تقريبًا`, `${m.name} is within about ${l.radius} m of you`)}
-                </Text>
-              );
-            })}
+            <MapScreen members={members} live={live} me={me} eventCenter={eventCenter} />
           </View>
         )}
       </ScrollView>
@@ -1751,8 +1214,6 @@ const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.bg },
   body: { padding: 20, paddingBottom: 110 },
 
-  back: { flexDirection: 'row-reverse', alignItems: 'center', gap: 6, alignSelf: 'flex-end', marginBottom: 12 },
-  backText: { color: C.accent, fontSize: 14, fontWeight: '700' },
   memberRow: { flexDirection: 'row-reverse', gap: 12, alignItems: 'flex-start' },
   avatar: { width: 52, height: 52, borderRadius: 18, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#fff', fontSize: 22, fontWeight: '700' },
@@ -1767,15 +1228,11 @@ const s = StyleSheet.create({
   linkBtn: { backgroundColor: C.primary, borderRadius: 10, paddingVertical: 9, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center' },
   linkText: { color: '#fff', fontSize: 14, fontWeight: '700' },
   typedRow: { flexDirection: 'row-reverse', gap: 10, alignItems: 'stretch' },
-  unlink: { color: C.accent, fontSize: 12.5, fontWeight: '700', textAlign: 'right', marginTop: 6 },
   stepRow: { flexDirection: 'row-reverse', alignItems: 'center', gap: 8, marginTop: 8 },
   stepText: { flex: 1, color: C.text, fontSize: 13.5, textAlign: 'right' },
   formTitle: { color: C.primary, fontSize: 16, fontWeight: '700', textAlign: 'right', marginBottom: 6 },
   label: { color: C.muted, fontSize: 12, fontWeight: '600', textAlign: 'right', marginTop: 12, marginBottom: 6 },
   input: ui.input,
-  chips: { flexDirection: 'row-reverse', gap: 10 },
-  chip: { flex: 1, borderWidth: 1.5, borderColor: 'transparent', borderRadius: 14, paddingVertical: 12, alignItems: 'center', backgroundColor: C.fill },
-  chipText: { color: C.text, fontSize: 14, fontWeight: '600' },
   nameRow: { flexDirection: 'row-reverse', justifyContent: 'space-between', alignItems: 'center' },
   memberName: { color: C.primary, fontSize: 18, fontWeight: '800', textAlign: 'right' },
   memberRole: { color: C.muted, fontSize: 12.5, textAlign: 'right', marginTop: 2 },
@@ -1798,24 +1255,6 @@ const s = StyleSheet.create({
   code: { color: C.primary, fontSize: 30, fontWeight: '700', letterSpacing: 8, marginVertical: 2, fontVariant: ['tabular-nums'] },
   codeHint: { color: C.muted, fontSize: 12, textAlign: 'center' },
   linkPanel: { marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.border },
-  readOnly: { color: C.text, fontSize: 15, textAlign: 'right' },
-  saved: { color: C.safe, fontSize: 13, fontWeight: '600', textAlign: 'right', marginTop: 12 },
-  formError: { color: C.danger, fontSize: 13, fontWeight: '600', textAlign: 'right', marginTop: 12 },
-  meCard: { flexDirection: 'row-reverse', alignItems: 'center', gap: 14, marginBottom: 14 },
-  meAvatar: { width: 60, height: 60, borderRadius: 20, backgroundColor: C.primary, alignItems: 'center', justifyContent: 'center' },
-  meAvatarText: { color: '#fff', fontSize: 26, fontWeight: '800' },
-  stats: { flexDirection: 'row-reverse', gap: 10 },
-  stat: { ...ui.tile, flex: 1, alignItems: 'center', paddingVertical: 12 },
-  statNum: { fontSize: 24, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  statLabel: { color: C.muted, fontSize: 12, fontWeight: '600', marginTop: 2 },
-  savedRow: { flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 14, paddingVertical: 14, borderRadius: 16, backgroundColor: C.safeBg },
-  setRow: { flexDirection: 'row-reverse', alignItems: 'center', gap: 12, paddingVertical: 13 },
-  setDivider: { borderTopWidth: 1, borderTopColor: C.border },
-  setIcon: { width: 36, height: 36, borderRadius: 12, backgroundColor: C.techBg, alignItems: 'center', justifyContent: 'center' },
-  setLabel: { flex: 1, color: C.text, fontSize: 15, fontWeight: '600', textAlign: 'right' },
-  pwBox: { marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: C.border },
-  pwActions: { flexDirection: 'row-reverse', gap: 10, marginTop: 14 },
-  setValue: { color: C.muted, fontSize: 13.5 },
   techText: { color: C.primary, fontSize: 12, textAlign: 'right', marginBottom: 2 },
 
   sos: {
@@ -1846,16 +1285,6 @@ const s = StyleSheet.create({
   sosRow: { flexDirection: 'row-reverse', gap: 10 },
   sosBtnGhost: { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: '#fff', paddingHorizontal: 18 },
 
-  mapBox: { width: '100%', borderRadius: 24, overflow: 'hidden', backgroundColor: '#E5E1D6', justifyContent: 'center' },
-  mapName: { backgroundColor: '#fff', borderWidth: 1.5, borderRadius: 10, paddingVertical: 2, paddingHorizontal: 8 },
-  mapNameText: { fontSize: 12, fontWeight: '700' },
-  mapWait: { textAlign: 'center', color: C.muted },
-  mapNote: { color: C.muted, fontSize: 14, textAlign: 'center', marginTop: 10 },
-
   empty: { color: C.faint, textAlign: 'center', marginTop: 30 },
-  logRow: { ...ui.tile, flexDirection: 'row-reverse', alignItems: 'center', gap: 12, marginBottom: 10 },
-  logDot: { width: 10, height: 10, borderRadius: 5 },
-  logLabel: { flex: 1, fontSize: 14, fontWeight: '600', textAlign: 'right' },
-  logTime: { color: C.faint, fontSize: 12, fontVariant: ['tabular-nums'] },
 
 });

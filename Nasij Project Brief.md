@@ -104,7 +104,7 @@ The bracelet is a **MOKO W6R** from Shenzhen Moko Technology (2 units received).
 
 ## 6. Current state of the app
 
-The family side works on a real iPhone with the real bracelet (tested before the code was split into folders; to retest after the split). The code is now split into folders: `App.tsx` is the shell, family screens are in `src/screens/family/`, volunteer screens in `src/screens/volunteer/`.
+The family side works on a real iPhone with the real bracelet (tested before the code was split into folders; to retest after the split). The code is now split into folders: `App.tsx` is the shell, family screens are in `src/screens/family/`, volunteer screens in `src/screens/volunteer/`. Since 2026-10-13 each family page has its own file like the volunteer side: `MapScreen.tsx`, `AlertsScreen.tsx`, `AccountScreen.tsx`, `MemberForm.tsx` (add/edit member), with shared types and zone labels in `shared.ts`. `FamilyApp.tsx` keeps the home tab, the bracelet scanning and the full-screen alerts.
 
 **Done and tested on the iPhone:**
 
@@ -313,6 +313,13 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 - **Private documents (health, phone, photo) after closing:** the assigned volunteer can no longer read them once the case is closed; after "handed to security" only security keeps them
 - **Bracelets free themselves after 12 hours:** the hourly cleanup deletes `bracelets/{mac}` locks linked more than 12 hours ago (`BRACELET_LOCK_MS` in `scripts/cleanup.mjs`), for families that left without "end of visit". The member who wore it gets `braceletId: null`, so the family app shows no bracelet next time it opens
 - **`sightings` readable by security only** (was: any volunteer too). Anyone can pick "volunteer" at login, so it exposed where every reported person was heard. The volunteer app never read it; `addSighting` still works
+
+**Changes on 2026-10-13** (branch `family-card-photo`):
+
+- **Family pages split into their own files** (family side, no change in how the app looks or works): `MapScreen.tsx`, `AlertsScreen.tsx`, `AccountScreen.tsx`, `MemberForm.tsx`, shared types and zone labels in `shared.ts`. `FamilyApp.tsx` keeps the home tab, bracelet scanning and the full-screen alerts. One small difference: typing on "My account" and leaving the tab before saving now clears it, the same as the volunteer account page
+- **Family bell number = unread alerts:** it counts alerts since the alerts tab was last opened and clears when that tab is seen. Before, it counted every alert of the visit and never cleared
+- **Done in Person 3's folder with the user's OK:** the first comment line of `src/screens/volunteer/AccountScreen.tsx` now points to `src/screens/family/AccountScreen.tsx` instead of `FamilyApp.tsx`. Comment only
+- **Each account keeps the role it signed up with** (`LoginScreen.tsx`, `App.tsx`): the family / volunteer choice is saved in `users/{uid}.role` at sign-up only (or the first time for older accounts with no role). Signing in with the other choice is refused with "this account is registered as family / a volunteer" and signs out; a security account can't sign in to the app. The "switch to volunteer / family" buttons are gone from both headers and both account pages (the volunteer side already hid them when `onSwitchRole` is not passed, so no volunteer screen changed). **Demo account:** `test@gmail.com` (`DEMO_EMAIL` in `LoginScreen.tsx`) is the exception: it opens either side, keeps the switch button, and keeps both sides mounted as before. Accounts for the demo: `test@gmail.com` (both sides), `family@gmail.com` (family only), `volunteer@gmail.com` (volunteer only). The new two are made by signing in once in the app with the right role picked
 
 **Changes on 2026-10-12 that affect everyone** (branch `lost-signal-20s`):
 
