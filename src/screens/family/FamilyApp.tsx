@@ -42,6 +42,7 @@ import { watchBracelets } from '../../../modules/nasij-beacon';
 const NEAR = -65;           // stronger than this = near
 const FAR = -80;            // weaker than this = far
 const HOLD_MS = 3000;       // a new state must last 3 s before we show it
+const RESUME_GRACE_MS = 5000; // back from the background: time to hear each bracelet again before "lost"
 const GAP = 4;              // extra margin needed to leave NEAR or FAR
 const TX_AT_1M = -59;       // average signal at 1 metre (calibrate with the laptop scanner)
 const PATH_LOSS = 2.5;      // how fast the signal fades (2 = open air, 3 = crowded)
@@ -255,12 +256,15 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
       tr.latest = { rssi: device.rssi, ...summarize(tr.history), lastSeen: t };
     });
 
-    // iOS stops scanning while the app is in the background: on return, give each bracelet a fresh
-    // LOST_AFTER_MS to be heard again instead of calling it lost at once (the iBeacon warning covers the locked time)
+    // iOS stops scanning while the app is in the background: on return, give each bracelet RESUME_GRACE_MS
+    // to be heard again instead of calling it lost at once. Short on purpose: a bracelet that really left
+    // while the phone was locked is still reported a few seconds after opening the app.
     const resumed = AppState.addEventListener('change', (state) => {
       if (state !== 'active') return;
-      const t = Date.now();
-      for (const tr of Object.values(tracks)) if (tr.latest) tr.latest = { ...tr.latest, lastSeen: t };
+      const graceFrom = Date.now() - LOST_AFTER_MS + RESUME_GRACE_MS;
+      for (const tr of Object.values(tracks)) {
+        if (tr.latest && tr.latest.lastSeen < graceFrom) tr.latest = { ...tr.latest, lastSeen: graceFrom };
+      }
     });
 
     // Twice a second: decide each bracelet's zone and refresh the screen
