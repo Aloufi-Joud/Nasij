@@ -1,4 +1,4 @@
-// "My account" for the volunteer (task 7): same page as the family's profile tab in FamilyApp.tsx.
+// "My account" for the volunteer (task 7): same page as the family's in src/screens/family/AccountScreen.tsx.
 // Name and phone live in users/{uid} (src/firebase/profile.ts); the name is what security sees on the dashboard.
 // Changing the email or the password asks for the current password first (Firebase wants a recent sign-in).
 // Logout asks inline, not with Alert.alert: Alert does nothing in the browser, where the volunteer side is tested.

@@ -35,8 +35,8 @@ async function write() {
   if (!duty) await deleteDoc(volunteerDoc(uid)); // went off duty while this write was on its way
 }
 
-// Also sets users/{uid}.role to volunteer: the header switch lets a family login open the volunteer
-// side, and the rules check that role before showing open reports. Family access does not use the role.
+// Also sets users/{uid}.role to volunteer (already saved at sign-up; kept for accounts made before that).
+// The rules check that role before showing open reports. Family access does not use the role.
 // ponytail: when roles are assigned by staff (see the "later" list), this write will be refused: remove it then.
 // name: the volunteer's name from "My account", shown on the dashboard; the email's first part until they add one
 export async function goOnDuty(name?: string): Promise<void> {

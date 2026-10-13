@@ -150,7 +150,7 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
     if (!shownId || accepting.current === shownId) return;
     const r = open.find((x) => x.id === shownId);
     if (r?.status === 'open' || (r && uid && r.assignedVolunteerId === uid)) return;
-    dropShown(shownId, r ? tr(`تولّى متطوع آخر بلاغ ${r.member.name}`, `Another volunteer took ${r.member.name}’s report`) : null);
+    dropShown(shownId, r ? () => tr(`تولّى متطوع آخر بلاغ ${r.member.name}`, `Another volunteer took ${r.member.name}’s report`) : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, shownId]);
 
@@ -165,8 +165,8 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
     take(
       r,
       bySecurity
-        ? { text: tr(`أعطاك فريق الأمن بلاغ ${r.member.name}`, `Security gave you ${r.member.name}’s report`), tone: 'warn' }
-        : { text: tr(`رجعنا لك بلاغ ${r.member.name} اللي كنت تتابعه`, `Back to ${r.member.name}’s report you were following`), tone: 'warn' },
+        ? { text: () => tr(`أعطاك فريق الأمن بلاغ ${r.member.name}`, `Security gave you ${r.member.name}’s report`), tone: 'warn' }
+        : { text: () => tr(`رجعنا لك بلاغ ${r.member.name} اللي كنت تتابعه`, `Back to ${r.member.name}’s report you were following`), tone: 'warn' },
     );
     vibrateFor(r);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -180,7 +180,7 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
     if (r && r.assignedVolunteerId === uid) return;
     endCase(
       null,
-      r
+      () => r
         ? tr(
             `حوّل فريق الأمن بلاغ ${active.member.name} لمتطوع آخر. حُذفت بياناته من جوالك`,
             `Security moved ${active.member.name}’s report to another volunteer. Their details were deleted from your phone`,
@@ -279,7 +279,7 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
         setOnDuty(true);
       }
     } catch {
-      setNotice({ text: tr('تعذّر الاتصال، تحقق من الإنترنت وحاول مرة ثانية', 'Couldn’t connect, check the internet and try again'), tone: 'danger' });
+      setNotice({ text: () => tr('تعذّر الاتصال، تحقق من الإنترنت وحاول مرة ثانية', 'Couldn’t connect, check the internet and try again'), tone: 'danger' });
     } finally {
       setDutyBusy(false);
     }
@@ -292,7 +292,7 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
     try {
       // Transaction: if two volunteers tap at once, only one gets the case
       if (!(await acceptReport(r.id, uid))) {
-        dropShown(r.id, tr(`تولّى متطوع آخر بلاغ ${r.member.name}`, `Another volunteer took ${r.member.name}’s report`));
+        dropShown(r.id, () => tr(`تولّى متطوع آخر بلاغ ${r.member.name}`, `Another volunteer took ${r.member.name}’s report`));
         return;
       }
       take(r);
@@ -300,7 +300,7 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
       // permission-denied is the rules, not the internet (e.g. firestore.rules not published after a change)
       const denied = (e as { code?: string }).code === 'permission-denied';
       setNotice({
-        text: denied
+        text: () => denied
           ? tr('ما عندك صلاحية تقبل هذا البلاغ', 'You’re not allowed to accept this report')
           : tr('تعذّر قبول البلاغ، تحقق من الإنترنت وحاول مرة ثانية', 'Couldn’t accept the report, check the internet and try again'),
         tone: 'danger',
@@ -328,7 +328,7 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
   }
 
   // Leaves the shown report for others: it stays in the open list but does not pop up again
-  function dropShown(id: string | null, text: string | null) {
+  function dropShown(id: string | null, text: Notice['text'] | null) {
     if (id) skipped.current.add(id);
     setShownId(null);
     Vibration.cancel();
@@ -337,7 +337,7 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
   const skip = () => dropShown(shownId, null);
 
   // Drops the case and everything it carried (photo, description, health) from this phone
-  function endCase(as: ClosedAs | null, text: string, tone: Notice['tone']) {
+  function endCase(as: ClosedAs | null, text: Notice['text'], tone: Notice['tone']) {
     if (!active) return;
     setClosed((old) => [{ id: active.id, name: active.member.name, type: active.type, closedAs: as, at: Date.now() }, ...old]);
     setActive(null);
@@ -360,14 +360,14 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
     const done = () =>
       endCase(
         as,
-        tr(
+        () => tr(
           `أُغلق بلاغ ${member.name}. حُذفت صلاحية السوار وبياناته الصحية من جوالك`,
           `${member.name}’s report is closed. Bracelet access and health details were deleted from your phone`,
         ),
         'safe',
       );
     const lostConnection = () =>
-      setNotice({ text: tr(`لم يصل إغلاق بلاغ ${member.name} للنظام، أبلغ فريق الأمن`, `Closing ${member.name}’s report didn’t reach the system, tell security`), tone: 'danger' });
+      setNotice({ text: () => tr(`لم يصل إغلاق بلاغ ${member.name} للنظام، أبلغ فريق الأمن`, `Closing ${member.name}’s report didn’t reach the system, tell security`), tone: 'danger' });
     if (code) {
       try {
         await closeReport(id, as, code);
@@ -453,7 +453,7 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
         {tab === 'case' && active && notice && (
           <Pressable style={[ui.strip, { backgroundColor: TONE[notice.tone].bg }]} onPress={() => setNotice(null)}>
             <Ionicons name={TONE[notice.tone].icon} size={16} color={TONE[notice.tone].color} />
-            <Text style={[ui.stripText, { color: TONE[notice.tone].color }]}>{notice.text}</Text>
+            <Text style={[ui.stripText, { color: TONE[notice.tone].color }]}>{notice.text()}</Text>
           </Pressable>
         )}
 

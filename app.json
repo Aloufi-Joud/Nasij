@@ -25,7 +25,7 @@
         "expo-image-picker",
         {
           "photosPermission": "نسيج يستخدم صورك عشان ترفق صورة حديثة لطفلك في البلاغ",
-          "cameraPermission": false,
+          "cameraPermission": "نسيج يستخدم الكاميرا عشان تصوّر طفلك بملابسه اليوم، تنرسل الصورة مع البلاغ بس",
           "microphonePermission": false
         }
       ],

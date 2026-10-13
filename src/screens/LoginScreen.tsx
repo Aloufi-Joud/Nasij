@@ -1,8 +1,10 @@
 // Login and role choice with Firebase Auth (email and password).
 // A new email is signed up on the spot, so the demo needs no separate sign-up screen.
+// The role picked at sign-up is the account's role for good: signing in as the other one is refused.
+// Except the demo account, which opens either side and has the switch button.
 import { useState } from 'react';
-import { createUserWithEmailAndPassword, sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc } from 'firebase/firestore';
+import { createUserWithEmailAndPassword, sendPasswordResetEmail, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { Text, TextInput } from '../components/Text';
@@ -14,6 +16,10 @@ import { LangButton, type IconName } from '../components/Header';
 import { tr } from '../i18n';
 
 export type Role = 'family' | 'volunteer';
+
+// ponytail: demo account picked by email in the app; fine while roles are self-chosen anyway (see the "later" list)
+export const DEMO_EMAIL = 'test@gmail.com';
+export const isDemo = (email?: string | null) => email?.trim().toLowerCase() === DEMO_EMAIL;
 
 const ROLES = (): { key: Role; title: string; text: string; icon: IconName }[] => [
   { key: 'family', title: tr('عائلة', 'Family'), text: tr('اربط سوار طفلك أو كبير السن وتابعه', 'Link your child’s or elder’s bracelet and keep track'), icon: 'people-outline' },
@@ -42,7 +48,19 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
         if (e.code !== 'auth/invalid-credential' && e.code !== 'auth/user-not-found') throw e;
         return createUserWithEmailAndPassword(auth, mail, password);
       });
-      await setDoc(doc(db, 'users', cred.user.uid), { email: mail, role }, { merge: true });
+      const ref = doc(db, 'users', cred.user.uid);
+      const saved = (await getDoc(ref)).data()?.role as string | undefined;
+      if (saved && saved !== role && !isDemo(mail)) {
+        await signOut(auth).catch(() => {});
+        return setError(
+          saved === 'family' ? tr('هذا الحساب مسجّل كعائلة، اختر "عائلة"', 'This account is registered as family, pick "Family"')
+          : saved === 'volunteer' ? tr('هذا الحساب مسجّل كمتطوع، اختر "متطوع"', 'This account is registered as a volunteer, pick "Volunteer"')
+          : tr('هذا الحساب ما يدخل من التطبيق', 'This account can’t sign in to the app'),
+        );
+      }
+      // Saved once: at sign-up, or for an older account made before roles were kept.
+      // The demo account saves each pick, as before (the volunteer side needs role volunteer in the rules)
+      if (!saved || isDemo(mail)) await setDoc(ref, { email: mail, role }, { merge: true });
       onLogin(role);
     } catch (e: any) {
       // One message for a wrong email or password, so the screen never tells which emails have accounts

@@ -33,15 +33,25 @@ export default function ProximityScreen({ report: r, signal, now, onHealth, onCl
   const zone = zoneOf(signal, now);
   const lost = zone === 'LOST';
   const heard = !!signal && !lost;
-  const view = heard
-    ? TREND_VIEW[signal.trend]
-    : {
-        label: lost ? tr('انقطعت الإشارة', 'Signal lost') : tr('لم يلتقط جوالك السوار بعد', 'Your phone hasn’t picked up the bracelet yet'),
-        hint: lost ? tr('ارجع لآخر مكان التقطت فيه الإشارة', 'Go back to where you last had the signal') : tr(`امشِ في المنطقة: ${r.area}`, `Walk around: ${place(r.area)}`),
-        color: lost ? C.danger : C.faint,
-        bg: lost ? C.dangerBg : C.fill,
-        icon: (lost ? 'close' : 'radio-outline') as Icon,
-      };
+  // A family can report without a linked bracelet: then there is no signal to wait for, only the photo and description
+  const noBracelet = !r.braceletId;
+  const view = noBracelet
+    ? {
+        label: tr('بلاغ بدون سوار', 'No bracelet on this report'),
+        hint: tr(`ابحث بعينك بالصورة والوصف في: ${r.area}`, `Search by the photo and description in: ${place(r.area)}`),
+        color: C.accent,
+        bg: C.techBg,
+        icon: 'eye-outline' as Icon,
+      }
+    : heard
+      ? TREND_VIEW[signal.trend]
+      : {
+          label: lost ? tr('انقطعت الإشارة', 'Signal lost') : tr('لم يلتقط جوالك السوار بعد', 'Your phone hasn’t picked up the bracelet yet'),
+          hint: lost ? tr('ارجع لآخر مكان التقطت فيه الإشارة', 'Go back to where you last had the signal') : tr(`امشِ في المنطقة: ${r.area}`, `Walk around: ${place(r.area)}`),
+          color: lost ? C.danger : C.faint,
+          bg: lost ? C.dangerBg : C.fill,
+          icon: (lost ? 'close' : 'radio-outline') as Icon,
+        };
   const strength = heard ? bars(signal.smooth) : 0;
   const metres = heard ? estimateMetres(signal.smooth) : null;
   const ago = signal ? Math.round((now - signal.lastSeen) / 1000) : null;
@@ -76,7 +86,7 @@ export default function ProximityScreen({ report: r, signal, now, onHealth, onCl
             </View>
           </View>
           <Text style={ui.muted}>{whoLine(r)}</Text>
-          <Text style={s.desc} numberOfLines={2}>
+          <Text style={s.desc} numberOfLines={noBracelet ? undefined : 2}>
             {r.description}
           </Text>
         </View>
@@ -102,34 +112,36 @@ export default function ProximityScreen({ report: r, signal, now, onHealth, onCl
       </View>
 
       {/* Signal, distance, last heard */}
-      <View style={s.metrics}>
-        <View style={s.metric}>
-          <View style={s.bigBars}>
-            {[1, 2, 3, 4].map((i) => (
-              <View
-                key={i}
-                style={[
-                  s.bigBar,
-                  {
-                    height: 8 + i * 9,
-                    backgroundColor:
-                      i <= strength ? (strength <= 1 ? C.danger : strength <= 2 ? C.warn : C.safe) : C.barOff,
-                  },
-                ]}
-              />
-            ))}
+      {!noBracelet && (
+        <View style={s.metrics}>
+          <View style={s.metric}>
+            <View style={s.bigBars}>
+              {[1, 2, 3, 4].map((i) => (
+                <View
+                  key={i}
+                  style={[
+                    s.bigBar,
+                    {
+                      height: 8 + i * 9,
+                      backgroundColor:
+                        i <= strength ? (strength <= 1 ? C.danger : strength <= 2 ? C.warn : C.safe) : C.barOff,
+                    },
+                  ]}
+                />
+              ))}
+            </View>
+            <Text style={s.metricLabel}>{tr('قوة الإشارة', 'Signal')}</Text>
           </View>
-          <Text style={s.metricLabel}>{tr('قوة الإشارة', 'Signal')}</Text>
+          <View style={s.metric}>
+            <Text style={s.metricNum}>{metres == null ? '—' : metres <= 2 ? '≤ 2' : `${metres}`}</Text>
+            <Text style={s.metricLabel}>{tr('متر تقريبًا', 'metres approx.')}</Text>
+          </View>
+          <View style={s.metric}>
+            <Text style={s.metricNum}>{ago == null ? '—' : ago < 2 ? tr('الآن', 'now') : tr(`${ago} ث`, `${ago}s`)}</Text>
+            <Text style={s.metricLabel}>{tr('آخر إشارة', 'Last signal')}</Text>
+          </View>
         </View>
-        <View style={s.metric}>
-          <Text style={s.metricNum}>{metres == null ? '—' : metres <= 2 ? '≤ 2' : `${metres}`}</Text>
-          <Text style={s.metricLabel}>{tr('متر تقريبًا', 'metres approx.')}</Text>
-        </View>
-        <View style={s.metric}>
-          <Text style={s.metricNum}>{ago == null ? '—' : ago < 2 ? tr('الآن', 'now') : tr(`${ago} ث`, `${ago}s`)}</Text>
-          <Text style={s.metricLabel}>{tr('آخر إشارة', 'Last signal')}</Text>
-        </View>
-      </View>
+      )}
 
       <View style={s.actions}>
         <Pressable style={ui.btn} onPress={onClose}>
