@@ -16,6 +16,13 @@ type Props = {
 
 // Leaflet renders tooltip strings as HTML; names come from users, so pass them as text
 const text = (s: string) => Object.assign(document.createElement('span'), { textContent: s });
+// A volunteer: a teal badge with a white ring, and the name under it (hidden when the map is small)
+function volIcon(name: string) {
+  const el = document.createElement('div');
+  el.className = 'vol';
+  el.append(Object.assign(document.createElement('span'), { className: 'vol-dot' }), Object.assign(text(name), { className: 'vol-name' }));
+  return L.divIcon({ html: el, className: 'vol-icon', iconSize: [26, 26], iconAnchor: [13, 13] });
+}
 const colour = (r: Report) => (r.type === 'lost' ? C.warn : C.danger);
 
 // Drawn Expo 2030 site (no real map tiles): round site, 5 petal zones, central hub
@@ -24,7 +31,7 @@ export default function MapView({ zones, reports, volunteers, lastSignal, select
   const map = useRef<L.Map>(null);
   const markers = useRef(new Map<string, L.CircleMarker>());
   const pulses = useRef(new Map<string, L.CircleMarker>());
-  const vols = useRef(new Map<string, L.CircleMarker>());
+  const vols = useRef(new Map<string, L.Marker>());
   const pick = useRef(onSelect);
   pick.current = onSelect;
 
@@ -34,6 +41,7 @@ export default function MapView({ zones, reports, volunteers, lastSignal, select
     // reports and their rings sit above the walking volunteers so they stay clickable
     m.createPane('reports').style.zIndex = '450';
     m.createPane('labels').style.zIndex = '440';
+    m.createPane('vols').style.zIndex = '445';
     const { view, world } = drawExpoSite(m, zones);
     m.setMaxBounds(world);
     // one name per zone: in the middle of its slice, or at the top of the central plaza
@@ -108,8 +116,8 @@ export default function MapView({ zones, reports, volunteers, lastSignal, select
       else
         vols.current.set(
           v.id,
-          L.circleMarker(at(v.location), { radius: 6, color: '#fff', weight: 2, fillColor: C.primary, fillOpacity: 1 })
-            .bindTooltip(text(`${v.name}، في الخدمة`))
+          L.marker(at(v.location), { pane: 'vols', icon: volIcon(v.name), keyboard: false })
+            .bindTooltip(text(`${v.name}، في الخدمة`), { direction: 'top', offset: [0, -14] })
             .addTo(m),
         );
     }
