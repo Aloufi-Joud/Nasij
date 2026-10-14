@@ -36,7 +36,7 @@ import AccountScreen from './AccountScreen';
 import AlertsScreen from './AlertsScreen';
 import MapScreen from './MapScreen';
 import MemberForm from './MemberForm';
-import { EMPTY, EVENT_RADIUS_M, KIND_UI, ZONE_UI, failed, formError, offset, type Accuracy, type FamMember, type Form, type Live, type LogItem, type LogKind, type Zone } from './shared';
+import { EMPTY, EVENT_RADIUS_M, KIND_UI, ZONE_UI, failed, formError, offset, type FamMember, type Form, type Live, type LogItem, type LogKind, type Zone } from './shared';
 import { langName, tr, place } from '../../i18n';
 import { watchBracelets } from '../../../modules/nasij-beacon';
 
@@ -73,12 +73,6 @@ const TREND_UI: Record<Trend, string> = {
   get approaching() { return tr('يقترب منك', 'Coming closer'); },
   get away() { return tr('يبتعد عنك', 'Moving away'); },
   get steady() { return tr('ثابت', 'Steady'); },
-};
-const ACCURACY_UI: Record<Accuracy['level'], { label: string; color: string }> = {
-  measuring: { get label() { return tr('جاري القياس…', 'Measuring…'); }, color: C.faint },
-  good: { get label() { return tr('دقة عالية', 'High accuracy'); }, color: C.accent },
-  fair: { get label() { return tr('دقة متوسطة', 'Medium accuracy'); }, color: C.warn },
-  poor: { get label() { return tr('دقة ضعيفة، الإشارة متذبذبة', 'Low accuracy, signal unsteady'); }, color: C.danger },
 };
 
 // 0 to 4 bars, like the prototype
@@ -147,19 +141,6 @@ function estimateMetres(smooth: number, zone: Zone) {
   return zone === 'NEAR' ? METRE_STEPS[0] : zone === 'FAR' ? Math.max(step, METRE_STEPS[1]) : step;
 }
 
-// Spread (dB) between the strongest and weakest of the last readings, for each accuracy level
-const GOOD_SPREAD = 6;
-const FAIR_SPREAD = 12;
-function accuracyOf(history: number[]): Accuracy {
-  const hi = Math.max(...history);
-  const lo = Math.min(...history);
-  const near = Math.max(1, Math.round(metresAt(hi)));
-  const far = Math.max(near, Math.round(metresAt(lo)));
-  if (history.length < 3) return { level: 'measuring', near, far };
-  const spread = hi - lo;
-  return { level: spread <= GOOD_SPREAD ? 'good' : spread <= FAIR_SPREAD ? 'fair' : 'poor', near, far };
-}
-
 type Tab = 'home' | 'map' | 'alerts' | 'profile';
 type Screen = { kind: 'lost' | 'found'; memberId: string } | null;
 
@@ -186,7 +167,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
   // Open reports per member id, kept live from Firestore
   const [reports, setReports] = useState<Record<string, Report>>({});
   // Handover code per member id: the volunteer asks for it before handing them over
-  const [codes, setCodes] = useState<Record<string, string>>({});
+  const [codes, setCodes] = useState<Record<string, string>>({}); // handover code per report id
   // Where a volunteer's phone last heard the bracelet of an open report, per member id
   const [seen, setSeen] = useState<Record<string, LastSeen | null>>({});
   const [screen, setScreen] = useState<Screen>(null);
@@ -388,7 +369,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
           }
           tr.edge = edge;
         }
-        next[mac] = { signal: r, zone: tr.zone, radius: tr.radius, edge: tr.edge, accuracy: tr.history.length ? accuracyOf(tr.history) : null };
+        next[mac] = { signal: r, zone: tr.zone, radius: tr.radius, edge: tr.edge };
       }
       setLive(next);
     }, 500);
@@ -432,9 +413,9 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
         else closeReport(r.id, 'found').catch(() => {});
       }
       setReports(open);
-      for (const [memberId, r] of Object.entries(open))
+      for (const r of Object.values(open))
         getHandoverCode(r.id)
-          .then((code) => code && setCodes((o) => ({ ...o, [memberId]: code })))
+          .then((code) => code && setCodes((o) => ({ ...o, [r.id]: code })))
           .catch(() => {});
     })().catch(() => {});
   }, []);
@@ -570,8 +551,10 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
 
   // Volunteers near the bracelet pick it up from Firestore
   const sendReport = async (m: FamMember, type: ReportType, description: string, photo: string | null) => {
-    // Handover code for children only: an elder can say who their family is
-    const code = m.kind === 'child' ? String(100000 + Math.floor(Math.random() * 900000)) : undefined;
+    // Handover code for a lost child only: an elder can say who their family is, and an emergency or fall
+    // happens near the family (their phone heard the bracelet), so there is no handover. With a code the rules
+    // also stop the volunteer closing it as 'helped'
+    const code = m.kind === 'child' && type === 'lost' ? String(100000 + Math.floor(Math.random() * 900000)) : undefined;
     // ponytail: away from the Expo site (every demo), the report goes to a random zone so volunteers see a real
     // place. Remove at the real event, where the family's own zone is used
     const here = areaOf(me);
@@ -591,7 +574,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
     };
     try {
       const id = await createReport({ ...r, code });
-      if (code) setCodes((o) => ({ ...o, [m.id]: code }));
+      if (code) setCodes((o) => ({ ...o, [id]: code }));
       setReports((o) => ({
         ...o,
         [m.id]: { ...r, id, createdAt: Date.now(), status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null },
@@ -614,11 +597,11 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
   });
 
   // Closing also deletes the photo, health and phone; the live report then shows "found"
-  const confirmFound = (memberId: string) => {
+  const confirmFound = (memberId: string, as: 'found' | 'helped' = 'found') => {
     const r = reports[memberId];
     if (!r) return;
     ownClose.current.add(r.id);
-    closeReport(r.id, 'found').catch(() => failed(tr('تعذر إغلاق البلاغ', 'Couldn’t close the report')));
+    closeReport(r.id, as).catch(() => failed(tr('تعذر إغلاق البلاغ', 'Couldn’t close the report')));
   };
 
   // Linking starts here: the bracelet is linked only after the press check passes
@@ -880,15 +863,6 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
                 {TREND_UI[reading.trend]} · {tr(`ضمن ${l?.radius} متر تقريبًا`, `within about ${l?.radius} m`)}
               </Text>
             )}
-            {reading && !lost && l?.accuracy && (
-              <Text style={[s.trend, { marginTop: 2 }]}>
-                <Text style={{ color: ACCURACY_UI[l.accuracy.level].color, fontWeight: '600' }}>{ACCURACY_UI[l.accuracy.level].label}</Text>
-                {l.accuracy.level !== 'measuring' &&
-                  (l.accuracy.near === l.accuracy.far
-                    ? tr(` · حوالي ${l.accuracy.near} م`, ` · about ${l.accuracy.near} m`)
-                    : tr(` · بين ${l.accuracy.near} و${l.accuracy.far} م`, ` · between ${l.accuracy.near} and ${l.accuracy.far} m`))}
-              </Text>
-            )}
           </View>
         </View>
 
@@ -914,10 +888,10 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
               const when = min < 1 ? tr('الآن', 'just now') : tr(`قبل ${min} د`, `${min} min ago`);
               return <Banner tone="info" icon="location-outline" text={tr(`آخر إشارة للسوار: ${where} · ${when}`, `Bracelet last heard: ${where} · ${when}`)} />;
             })()}
-            {codes[m.id] && (
+            {codes[report.id] && (
               <View style={s.codeBox}>
                 <Text style={s.codeLabel}>{tr('رمز التأكيد', 'Confirmation code')}</Text>
-                <Text style={s.code}>{codes[m.id]}</Text>
+                <Text style={s.code}>{codes[report.id]}</Text>
                 <Text style={s.codeHint}>
                   {tr(
                     `قوله للمتطوع بس لما يسلّمك ${m.name}. ما يسلّمه لأحد بدون هالرمز`,
@@ -926,7 +900,12 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
                 </Text>
               </View>
             )}
-            <Button label={tr('لقيناه', 'We found them')} icon="checkmark-circle-outline" onPress={() => setScreen({ kind: 'found', memberId: m.id })} />
+            {report.type === 'lost' ? (
+              <Button label={tr('لقيناه', 'We found them')} icon="checkmark-circle-outline" onPress={() => setScreen({ kind: 'found', memberId: m.id })} />
+            ) : (
+              // An emergency or fall: the family closes it themselves (a press by mistake, or they're with them now)
+              <Button label={tr('لم أعد أحتاج إلى مساعدة', 'No longer need help')} icon="checkmark-circle-outline" onPress={() => confirmFound(m.id, 'helped')} />
+            )}
           </View>
         )}
 
