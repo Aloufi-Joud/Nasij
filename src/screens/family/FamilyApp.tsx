@@ -704,7 +704,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
 
           <View style={s.stepRow}>
             <Ionicons name={pv.near ? 'checkmark-circle' : 'ellipse-outline'} size={20} color={pv.near ? C.safe : C.faint} />
-            <Text style={s.stepText}>{tr('١. لصّقي السوار بالجوال', '1. Hold the bracelet against the phone')}</Text>
+            <Text style={s.stepText}>{tr('١. قرّبي السوار من الجوال', '1. Bring the bracelet close to the phone')}</Text>
           </View>
           <View style={s.stepRow}>
             <Ionicons name="ellipse-outline" size={20} color={C.faint} />
@@ -725,7 +725,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
     return (
       <View style={s.linkPanel}>
         <Text style={s.formTitle}>{tr(`ربط سوار ${m.name}`, `Link ${m.name}’s bracelet`)}</Text>
-        <Text style={s.hint}>{tr('لصّقي السوار بالجوال، وبيطلع أول القائمة', 'Hold the bracelet against the phone and it shows first')}</Text>
+        <Text style={s.hint}>{tr('قرّبي السوار من الجوال، وبيطلع أول القائمة', 'Bring the bracelet close to the phone and it shows first')}</Text>
 
         {nearbyList.length === 0 && <Text style={s.empty}>{tr('جاري البحث عن أساور قريبة...', 'Looking for nearby bracelets...')}</Text>}
         {nearbyList.map(([mac, v], i) => {
