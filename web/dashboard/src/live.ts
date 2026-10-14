@@ -96,11 +96,13 @@ const demoVolunteers: Volunteer[] = [
 ];
 const WALK = 2; // metres per 250 ms tick: a brisk walk sped up for the demo
 const HEAR = 40; // the volunteer's phone picks up the bracelet this close
+const HELP_MS = 5000; // after reaching the person, the volunteer closes the case this much later
 
 function useMock() {
   const [reports, setReports] = useState(demoReports);
   const [closed, setClosed] = useState(demoClosed);
   const [volunteers, setVolunteers] = useState(demoVolunteers);
+  const [loaded] = useState(Date.now);
   const [sightings, setSightings] = useState<Sighting[]>(() =>
     zones.slice(0, 2).map((z, i) => ({ id: `ds${i}`, reportId: 'demo-closed', volunteerId: v.id, rssi: -70, at: t + (90 + i * 60) * 1000, area: z.name, location: z.center })),
   );
@@ -108,35 +110,54 @@ function useMock() {
     const timers = arriving.map(([sec, make]) => setTimeout(() => setReports((rs) => [...rs, make()]), sec * 1000));
     return () => timers.forEach(clearTimeout);
   }, []);
-  // Each assigned volunteer walks straight to their case; near it, their phone hears the bracelet once
+  // Each assigned volunteer walks straight to their case; near it, their phone hears the bracelet once.
+  // A few seconds after reaching the person they close it: a lost person handed to the family, others helped on the spot
+  const [beat, setBeat] = useState(0);
   useEffect(() => {
-    const tick = setTimeout(() => {
-      const heard: Sighting[] = [];
-      const next = volunteers.map((x) => {
-        const r = reports.find((r) => r.assignedVolunteerId === x.id && r.location);
-        if (!r?.location) return x;
-        const d = metresBetween(x.location, r.location);
-        if (d < HEAR && !sightings.some((s) => s.reportId === r.id && s.volunteerId === x.id)) {
-          heard.push({ id: `s-${r.id}-${x.id}`, reportId: r.id, volunteerId: x.id, rssi: -62, at: Date.now(), area: zoneOf(r.location)?.name ?? r.area, location: r.location });
-        }
-        if (d <= 6) return x;
-        const k = Math.min(WALK, d - 6) / d;
-        const location = { latitude: x.location.latitude + (r.location.latitude - x.location.latitude) * k, longitude: x.location.longitude + (r.location.longitude - x.location.longitude) * k };
-        return { ...x, location, area: zoneOf(location)?.name ?? x.area };
-      });
-      if (next.some((x, i) => x !== volunteers[i])) setVolunteers(next);
-      if (heard.length) setSightings((ss) => [...ss, ...heard]);
-    }, 250);
-    return () => clearTimeout(tick);
-  }, [volunteers, reports, sightings]);
+    const i = setInterval(() => setBeat((b) => b + 1), 250);
+    return () => clearInterval(i);
+  }, []);
+  const [arrived] = useState(() => new Map<string, number>());
+  useEffect(() => {
+    const now = Date.now();
+    const heard: Sighting[] = [];
+    const done: Report[] = [];
+    const next = volunteers.map((x) => {
+      const r = reports.find((r) => r.assignedVolunteerId === x.id && r.location);
+      if (!r?.location) return x;
+      const d = metresBetween(x.location, r.location);
+      if (d < HEAR && !sightings.some((s) => s.reportId === r.id && s.volunteerId === x.id)) {
+        heard.push({ id: `s-${r.id}-${x.id}`, reportId: r.id, volunteerId: x.id, rssi: -62, at: now, area: zoneOf(r.location)?.name ?? r.area, location: r.location });
+      }
+      if (d <= 6) {
+        if (!arrived.has(r.id)) arrived.set(r.id, now);
+        else if (now - arrived.get(r.id)! >= HELP_MS) done.push({ ...r, status: 'closed', closedAs: r.type === 'lost' ? 'found' : 'helped', closedAt: now });
+        return x;
+      }
+      const k = Math.min(WALK, d - 6) / d;
+      const location = { latitude: x.location.latitude + (r.location.latitude - x.location.latitude) * k, longitude: x.location.longitude + (r.location.longitude - x.location.longitude) * k };
+      return { ...x, location, area: zoneOf(location)?.name ?? x.area };
+    });
+    if (next.some((x, i) => x !== volunteers[i])) setVolunteers(next);
+    if (heard.length) setSightings((ss) => [...ss, ...heard]);
+    if (done.length) {
+      setReports((rs) => rs.filter((r) => !done.some((c) => c.id === r.id)));
+      setClosed((cs) => [...done, ...cs]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [beat]);
   const memberOf = (braceletId: string) => mockMembers.find((m) => m.braceletId?.toUpperCase() === braceletId.toUpperCase());
   const name = (id: string) => volunteers.find((x) => x.id === id)?.name ?? 'متطوع';
   const events: LiveEvent[] = [
     ...reports.map((r) => ({ id: r.id, at: r.createdAt, kind: 'report' as const, reportId: r.id, text: `بلاغ جديد: ${r.member.name}، ${TYPE[r.type]}` })),
     ...sightings.flatMap((s) => {
-      const r = reports.find((x) => x.id === s.reportId);
+      const r = [...reports, ...closed].find((x) => x.id === s.reportId);
       return r ? [{ id: s.id, at: s.at, kind: 'signal' as const, reportId: r.id, text: `${name(s.volunteerId)} التقط إشارة سوار ${r.member.name} في ${s.area}` }] : [];
     }),
+    ...closed.filter((r) => r.closedAt! > loaded).map((r) => ({
+      id: `c-${r.id}`, at: r.closedAt!, kind: 'report' as const, reportId: r.id,
+      text: r.closedAs === 'found' ? `${name(r.assignedVolunteerId!)} سلّم ${r.member.name} لعائلته` : `${name(r.assignedVolunteerId!)} ساعد ${r.member.name} في مكانه`,
+    })),
   ].sort((a, b) => b.at - a.at);
   const actions = {
     assign: async (id: string, volunteerId: string) =>
@@ -179,7 +200,7 @@ function useFirestore() {
       text: `بلاغ جديد: ${r.member.name}، ${TYPE[r.type]}`,
     })),
     ...sightings.flatMap((s) => {
-      const r = reports.find((x) => x.id === s.reportId);
+      const r = [...reports, ...closed].find((x) => x.id === s.reportId);
       return r ? [{ id: s.id, at: s.at, kind: 'signal' as const, reportId: r.id, text: `${name(s.volunteerId)} التقط إشارة سوار ${r.member.name}${s.area ? ` في ${s.area}` : ''}` }] : [];
     }),
     ...passerby.map((p) => {
