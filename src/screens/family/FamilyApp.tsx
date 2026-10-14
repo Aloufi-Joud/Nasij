@@ -36,7 +36,7 @@ import AccountScreen from './AccountScreen';
 import AlertsScreen from './AlertsScreen';
 import MapScreen from './MapScreen';
 import MemberForm from './MemberForm';
-import { EMPTY, EVENT_RADIUS_M, KIND_UI, ZONE_UI, failed, formError, offset, type FamMember, type Form, type Live, type LogItem, type LogKind, type Zone } from './shared';
+import { EMPTY, EVENT_RADIUS_M, KIND_UI, ZONE_UI, failed, formError, offset, type Accuracy, type FamMember, type Form, type Live, type LogItem, type LogKind, type Zone } from './shared';
 import { langName, tr, place } from '../../i18n';
 import { watchBracelets } from '../../../modules/nasij-beacon';
 
@@ -73,6 +73,12 @@ const TREND_UI: Record<Trend, string> = {
   get approaching() { return tr('يقترب منك', 'Coming closer'); },
   get away() { return tr('يبتعد عنك', 'Moving away'); },
   get steady() { return tr('ثابت', 'Steady'); },
+};
+const ACCURACY_UI: Record<Accuracy['level'], { label: string; color: string }> = {
+  measuring: { get label() { return tr('جاري القياس…', 'Measuring…'); }, color: C.faint },
+  good: { get label() { return tr('دقة عالية', 'High accuracy'); }, color: C.accent },
+  fair: { get label() { return tr('دقة متوسطة', 'Medium accuracy'); }, color: C.warn },
+  poor: { get label() { return tr('دقة ضعيفة، الإشارة متذبذبة', 'Low accuracy, signal unsteady'); }, color: C.danger },
 };
 
 // 0 to 4 bars, like the prototype
@@ -134,9 +140,24 @@ function getZone(ageMs: number, smooth: number, current: Zone | null): Zone {
 // Rough distance in metres from signal strength, rounded up to a few steps: the signal swings by several dB
 // when the phone just turns in the hand, so exact metres would jump around (8 to 18 m standing still)
 const METRE_STEPS = [5, 10, 20, 40, 60];
-function estimateMetres(smooth: number) {
-  const d = Math.pow(10, (TX_AT_1M - smooth) / (10 * PATH_LOSS));
-  return METRE_STEPS.find((m) => d <= m) ?? 60;
+const metresAt = (rssi: number) => Math.pow(10, (TX_AT_1M - rssi) / (10 * PATH_LOSS));
+function estimateMetres(smooth: number, zone: Zone) {
+  const step = METRE_STEPS.find((m) => metresAt(smooth) <= m) ?? 60;
+  // Match the zone on screen: "far" while the steps say 5 m read as a contradiction
+  return zone === 'NEAR' ? METRE_STEPS[0] : zone === 'FAR' ? Math.max(step, METRE_STEPS[1]) : step;
+}
+
+// Spread (dB) between the strongest and weakest of the last readings, for each accuracy level
+const GOOD_SPREAD = 6;
+const FAIR_SPREAD = 12;
+function accuracyOf(history: number[]): Accuracy {
+  const hi = Math.max(...history);
+  const lo = Math.min(...history);
+  const near = Math.max(1, Math.round(metresAt(hi)));
+  const far = Math.max(near, Math.round(metresAt(lo)));
+  if (history.length < 3) return { level: 'measuring', near, far };
+  const spread = hi - lo;
+  return { level: spread <= GOOD_SPREAD ? 'good' : spread <= FAIR_SPREAD ? 'fair' : 'poor', near, far };
 }
 
 type Tab = 'home' | 'map' | 'alerts' | 'profile';
@@ -348,7 +369,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
           const raw = getZone(age, r.smooth, tr.zone);
           if (raw !== tr.candidate.zone) tr.candidate = { zone: raw, since: t };
           const confirmed = tr.zone === null || raw === 'LOST' || t - tr.candidate.since >= HOLD_MS ? raw : tr.zone;
-          if (confirmed !== 'LOST') tr.radius = estimateMetres(r.smooth);
+          if (confirmed !== 'LOST') tr.radius = estimateMetres(r.smooth, confirmed);
           if (confirmed !== tr.zone) {
             tr.zone = confirmed;
             addLog(confirmed, who);
@@ -367,7 +388,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
           }
           tr.edge = edge;
         }
-        next[mac] = { signal: r, zone: tr.zone, radius: tr.radius, edge: tr.edge };
+        next[mac] = { signal: r, zone: tr.zone, radius: tr.radius, edge: tr.edge, accuracy: tr.history.length ? accuracyOf(tr.history) : null };
       }
       setLive(next);
     }, 500);
@@ -859,6 +880,15 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
                 {TREND_UI[reading.trend]} · {tr(`ضمن ${l?.radius} متر تقريبًا`, `within about ${l?.radius} m`)}
               </Text>
             )}
+            {reading && !lost && l?.accuracy && (
+              <Text style={[s.trend, { marginTop: 2 }]}>
+                <Text style={{ color: ACCURACY_UI[l.accuracy.level].color, fontWeight: '600' }}>{ACCURACY_UI[l.accuracy.level].label}</Text>
+                {l.accuracy.level !== 'measuring' &&
+                  (l.accuracy.near === l.accuracy.far
+                    ? tr(` · حوالي ${l.accuracy.near} م`, ` · about ${l.accuracy.near} m`)
+                    : tr(` · بين ${l.accuracy.near} و${l.accuracy.far} م`, ` · between ${l.accuracy.near} and ${l.accuracy.far} m`))}
+              </Text>
+            )}
           </View>
         </View>
 
@@ -886,7 +916,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
             })()}
             {codes[m.id] && (
               <View style={s.codeBox}>
-                <Text style={s.codeLabel}>{tr('رمز التسليم', 'Handover code')}</Text>
+                <Text style={s.codeLabel}>{tr('رمز التأكيد', 'Confirmation code')}</Text>
                 <Text style={s.code}>{codes[m.id]}</Text>
                 <Text style={s.codeHint}>
                   {tr(

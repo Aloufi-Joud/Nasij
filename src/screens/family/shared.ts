@@ -13,7 +13,9 @@ export type Zone = 'NEAR' | 'MEDIUM' | 'FAR' | 'LOST';
 export type LogKind = Zone | 'SOS' | 'FALL' | 'REPORT' | 'FOUND' | 'EDGE' | 'CANCELLED';
 export type LogItem = { time: string; kind: LogKind; who: string };
 // What the screen shows per bracelet, copied from the tracks twice a second
-export type Live = { signal: Signal | null; zone: Zone | null; radius: number; edge: boolean };
+export type Live = { signal: Signal | null; zone: Zone | null; radius: number; edge: boolean; accuracy: Accuracy | null };
+// How much to trust the distance: from how far apart the last readings are. near/far = metres from the strongest/weakest one.
+export type Accuracy = { level: 'measuring' | 'good' | 'fair' | 'poor'; near: number; far: number };
 
 // A member as the family edits it (age and phone as typed), plus the linked bracelet
 export type Form = {
