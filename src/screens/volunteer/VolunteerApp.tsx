@@ -12,7 +12,7 @@ import * as Location from 'expo-location';
 import { C, F, ui } from '../../theme';
 import { Header, HeaderButton, Pill } from '../../components/Header';
 import { BottomNav } from '../../components/BottomNav';
-import type { ClosedAs, Language, PasserbyReport, Report } from '../../mock';
+import type { ClosedAs, Language, PasserbyReport, Point, Report } from '../../mock';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { loadProfile, type Profile } from '../../firebase/profile';
@@ -58,6 +58,7 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
   const [passerby, setPasserby] = useState<PasserbyReport[]>([]);
   const [passerbyShown, setPasserbyShown] = useState<PasserbyReport | null>(null); // the box over the screen
   const [area, setArea] = useState('');
+  const [here, setHere] = useState<Point | null>(null); // this volunteer's position, for "about 200 m from you" on the alert card
   const [locationDenied, setLocationDenied] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [languages, setLanguages] = useState<Language[]>(['ar']);
@@ -119,6 +120,7 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
       watch = await Location.watchPositionAsync({ accuracy: Location.Accuracy.Balanced, distanceInterval: 10 }, (pos) => {
         const p = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
         setArea(areaOf(p));
+        setHere(p);
         updateVolunteerLocation(p).catch(() => {});
       });
       if (stopped) watch.remove();
@@ -272,6 +274,7 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
         setOpen([]);
         setShownId(null);
         skipped.current.clear();
+        setHere(null);
         Vibration.cancel();
         await goOffDuty();
       } else {
@@ -392,7 +395,9 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
     setOpen([]);
     setShownId(null);
     Vibration.cancel();
-    await goOffDuty().catch(() => {});
+    // deleteDoc waits for the server and never finishes offline, which left the button on "One moment…" forever.
+    // Wait up to 4 s; if it is still pending, log out anyway (the hourly cleanup removes the leftover document)
+    await Promise.race([goOffDuty().catch(() => {}), new Promise((resolve) => setTimeout(resolve, 4000))]);
     await signOut(auth).catch(() => {});
     onLogout?.();
   };
@@ -417,7 +422,7 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
           <>
             {incoming && (
               <FadeIn key={incoming.id}>
-                <AlertCard report={incoming} now={now} speaks={speaks(incoming)} onAccept={accept} onDecline={skip} />
+                <AlertCard report={incoming} now={now} speaks={speaks(incoming)} from={here} onAccept={accept} onDecline={skip} />
               </FadeIn>
             )}
             {active && (

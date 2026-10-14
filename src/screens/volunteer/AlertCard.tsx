@@ -5,21 +5,37 @@ import { Text } from '../../components/Text';
 import { Pressable } from '../../components/Motion';
 import { Ionicons } from '@expo/vector-icons';
 import { C, F, ui } from '../../theme';
-import type { Report } from '../../mock';
+import type { Point, Report } from '../../mock';
+import { metresBetween } from '../../components/geo';
 import { langName, tr, place } from '../../i18n';
 import ReportPhoto from './ReportPhoto';
 import { TYPE_UI, since, whoLine } from './labels';
 
-// speaks = this volunteer speaks the member's language
-type Props = { report: Report; now: number; speaks: boolean; onAccept: () => void; onDecline: () => void };
+// speaks = this volunteer speaks the member's language; from = this volunteer's position (null: unknown)
+type Props = { report: Report; now: number; speaks: boolean; from?: Point | null; onAccept: () => void; onDecline: () => void };
 
-export default function AlertCard({ report: r, now, speaks, onAccept, onDecline }: Props) {
+// Rough distance, rounded because GPS is only good to 10-20 m. Null when either position is unknown.
+function distanceText(from: Point | null | undefined, to: Point | null) {
+  if (!from || !to) return null;
+  const m = metresBetween(from, to);
+  if (m < 50) return tr('قريب جدًا منك، أقل من 50 م', 'Very close to you, under 50 m');
+  if (m < 1000) {
+    const r = Math.round(m / 10) * 10;
+    return tr(`يبعد عنك حوالي ${r} م`, `About ${r} m from you`);
+  }
+  const km = (m / 1000).toFixed(1);
+  return tr(`يبعد عنك حوالي ${km} كم`, `About ${km} km from you`);
+}
+
+export default function AlertCard({ report: r, now, speaks, from, onAccept, onDecline }: Props) {
   const t = TYPE_UI[r.type];
   const lost = r.type === 'lost';
   const urgentText =
     r.type === 'emergency'
       ? tr(`${r.member.name} ضغط زر الطوارئ في السوار مرتين`, `${r.member.name} pressed the bracelet’s emergency button twice`)
       : tr(`سوار ${r.member.name} توقف عن الحركة ٣ دقائق`, `${r.member.name}’s bracelet hasn’t moved for 3 minutes`);
+
+  const distance = distanceText(from, r.location);
 
   return (
     <View style={[s.card, { borderColor: lost ? C.warnBorder : C.dangerBorder }]}>
@@ -69,6 +85,12 @@ export default function AlertCard({ report: r, now, speaks, onAccept, onDecline 
           <Ionicons name="location-outline" size={15} color={C.accent} />
           <Text style={s.infoText}>{tr(`آخر مكان معروف: ${r.area}`, `Last known place: ${place(r.area)}`)}</Text>
         </View>
+        {distance && (
+          <View style={s.info}>
+            <Ionicons name="navigate-outline" size={15} color={C.accent} />
+            <Text style={[s.infoText, { fontWeight: '700' }]}>{distance}</Text>
+          </View>
+        )}
         {r.health && (
           <View style={s.info}>
             <Ionicons name="medkit-outline" size={15} color={C.danger} />
