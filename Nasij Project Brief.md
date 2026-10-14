@@ -314,6 +314,13 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 - **Bracelets free themselves after 12 hours:** the hourly cleanup deletes `bracelets/{mac}` locks linked more than 12 hours ago (`BRACELET_LOCK_MS` in `scripts/cleanup.mjs`), for families that left without "end of visit". The member who wore it gets `braceletId: null`, so the family app shows no bracelet next time it opens
 - **`sightings` readable by security only** (was: any volunteer too). Anyone can pick "volunteer" at login, so it exposed where every reported person was heard. The volunteer app never read it; `addSighting` still works
 
+**Changes on 2026-10-14: last place heard on the family map** (branch `family-map-last-seen`):
+
+- **`firestore.rules` changed, publish it:** `reports/{id}/seen/last` may now also hold `location` = `{ latitude, longitude }` (nothing else inside). Tests added to `scripts/rules.test.mjs`
+- `addSighting` (`src/firebase/sightings.ts`, no change in how it is called) now also writes the volunteer's location **rounded to about 20 m** into `seen/last`. The exact location still goes only to `sightings` (security). The bracelet has no GPS, so this location is the volunteer's phone
+- **Family map:** a member with an open report gets a red dashed circle (30 m) labelled "Last heard: <name>" where a volunteer last heard the bracelet, and a line under the map with the zone and how long ago. Nothing changes on the volunteer side
+- **Fix:** the bracelet circles around the parent disappeared the second time the map tab was opened (the map stays mounted and is hidden, and the circles drawn while it was hidden did not come back). The map is now built afresh on every visit (redrawing only the circles did not fix it on the phone)
+
 **Changes on 2026-10-13: warning with the phone locked** (branch `locked-phone-beacon`):
 
 - **Needs a new Mac install** (`npx expo run:ios --device`): new local native module `modules/nasij-beacon` (Swift, picked up automatically, nothing to `npm install`). On the phone, allow location **"Always"** and notifications
@@ -344,6 +351,16 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 - **New native package `expo-audio`:** run `npm install` after pulling. It needs the next Mac install. Builds without it only vibrate, as before. The microphone permission is turned off in `app.json`
 - New `alarm(pattern)` in `src/components/alarm.ts`: vibrates with the same pattern and plays two short beeps (`assets/alert.wav`), **even with the silent switch on**. The family app uses it for every alert (emergency or fall, far or lost, event edge, passer-by)
 - **Proposal for Person 3** (your folder, not done for you): in `src/screens/volunteer/VolunteerApp.tsx`, use `alarm(...)` in place of `Vibration.vibrate(...)` in `vibrateFor` (new report) and for a new passer-by report, so volunteers hear new reports too. Import it from `../../components/alarm`. Keep `Vibration.cancel()` as it is
+
+**Proposal for Person 3, 2026-10-14: distance on the report card** (your folder, not done for you):
+
+- **Today:** the card shows only the area name, so a volunteer can't tell whether the report is 50 m or 1 km away.
+- **Idea:** the card also says "about 200 m from you". Volunteers stay free to accept or skip; now they know whether it is close or far.
+- **How:**
+  1. In `src/screens/volunteer/VolunteerApp.tsx`, keep the volunteer's position in state: `const [here, setHere] = useState<Point | null>(null)`, and call `setHere(p)` in the `watchPositionAsync` callback next to `setArea(areaOf(p))`.
+  2. In `AlertCard.tsx`, add a prop `metres: number | null`. Under "Last known place", when it is not null, show `tr(`يبعد عنك حوالي ${Math.round(metres / 10) * 10} م`, `About ${Math.round(metres / 10) * 10} m from you`)` (round to 10 m, GPS is not more precise than that).
+  3. In `VolunteerApp.tsx`, pass `metres={here && incoming.location ? metresBetween(here, incoming.location) : null}` to `<AlertCard>` (`metresBetween` from `../../components/geo`).
+- No change to the rules, data or other screens. With no location (permission off, or a report without a position), the line is hidden.
 
 **Changes on 2026-10-12 that affect everyone** (branch `lost-signal-20s`):
 
@@ -419,6 +436,7 @@ The focus now is visible features: build the app first, then harden it step by s
 - **Fixed MAC in `EA00`:** decided 2026-10-10 to keep it. The vendor manual allows turning off the scan response and setting a per-visit Device ID, but that means reconfiguring every bracelet and replacing its NFC/QR sticker at each visit, which is not practical. Risk is small: the number carries no personal data, and a per-visit number would only stop linking one visit to the next. Pitch: future bracelets with rotating IDs
 - **Replay attack:** someone records a child's broadcast and replays it near the parent, so the app shows "near" while the child is gone. Same for the locked-phone iBeacon warning (2026-10-13): its UUID, major and minor are fixed, so anyone broadcasting them near the parent keeps the warning from firing. Cannot be fixed with this bracelet: per the vendor manual (V1.2) every frame it sends (Eddystone-UID, iBeacon, Alarm info) is static, with no rotating ID, encryption or secret. Needs custom firmware from MOKO or another bracelet. Pitch: future work
 - **Volunteer role assigned by staff:** today anyone can pick "volunteer" at login. The role must come from the `users` document, set by staff, and be checked in Firestore rules
+- **Fake "last heard" place (2026-10-14):** any logged-in volunteer can write any location and zone into `reports/{id}/seen/last` of any open report, so the family map can be pointed at the wrong place. The rules cannot check that the phone really heard the bracelet or really stands there (same for `sightings`). Fix later: only count a place after two different volunteers report it nearby, or let security confirm it. Tied to the staff-assigned volunteer role above
 - **Spam on the passer-by page:** done: a report needs the sticker's secret token, so numbers cannot be guessed from home, and 2 reports per bracelet in 15 minutes. Left: someone holding a bracelet (or a copied sticker link) can still send 2 false reports per 15 minutes for it
 - **Handover code:** checked by the rules now; a better check needs the paid plan, see below
 - **Linking code at the gate:** a code handed over with the bracelet, on top of the press check. Why (found 2026-10-10): the press check runs only in the app, so anyone with an account can link a bracelet nobody holds yet (and get its passer-by alerts), or link it before the real family. Idea, not decided (Joud to think about it): an 8-character code per bracelet on a card given at the gate, typed when linking and checked by the rules, like the sticker token

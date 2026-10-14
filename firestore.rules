@@ -127,7 +127,10 @@ service cloud.firestore {
         function report() { return get(/databases/$(database)/documents/reports/$(id)).data; }
         allow read, delete: if signedIn() && (report().familyId == me() || report().assignedVolunteerId == me() || isSecurity());
         allow create, update: if isVolunteer() && doc == 'last' && report().status != 'closed'
-          && request.resource.data.keys().hasOnly(['area', 'at'])
+          && request.resource.data.keys().hasOnly(['area', 'at', 'location'])
+          && (!('location' in request.resource.data) || (request.resource.data.location is map
+            && request.resource.data.location.keys().hasOnly(['latitude', 'longitude'])
+            && request.resource.data.location.latitude is number && request.resource.data.location.longitude is number))
           && request.resource.data.area is string && request.resource.data.area.size() <= 60
           && request.resource.data.at is int && nearNow(request.resource.data.at);
       }
