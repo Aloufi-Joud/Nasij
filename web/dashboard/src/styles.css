@@ -40,6 +40,9 @@ a { color: var(--primary); }
 }
 :is(.report, button.row, .ghost, .primary, .sound, .login button):active:not(:disabled) { transform: scale(0.98); }
 
+/* Demo mode (?demo): made-up data, so say so plainly where nobody can miss it */
+.demo-flag { margin: 0; background: #FFC857; color: #3A2A00; font-size: 13px; font-weight: 700; border-radius: 999px; padding: 5px 14px; }
+
 /* Header: dark teal with rounded bottom corners and faint woven rings, like the app */
 .top {
   position: relative; overflow: hidden; isolation: isolate;

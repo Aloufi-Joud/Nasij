@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { zones, type ClosedAs, type Health, type PasserbyReport, type Report, type Sighting, type Volunteer } from '../../../src/mock';
 import { minSec } from '../../../src/components/digits';
 import { metresBetween } from '../../../src/components/geo';
-import { TYPE, useLive, zoneOf } from './live';
+import { DEMO, TYPE, useLive, zoneOf } from './live';
 import MapView from './MapView';
 
 // A report nobody took after this long is flagged in red and beeps once
@@ -143,6 +143,11 @@ export default function App() {
         <h1>
           نسيج <span>لوحة الأمن</span>
         </h1>
+        {DEMO && (
+          <p className="demo-flag" role="note">
+            عرض تجريبي، بيانات غير حقيقية
+          </p>
+        )}
         <p className="live" role="status">
           <span className="live-dot" aria-hidden="true" />
           مباشر <span className="num">{liveClock.format(now)}</span>
