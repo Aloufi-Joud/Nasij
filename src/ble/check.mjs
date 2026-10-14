@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import { metresBetween } from '../components/geo.ts';
 import { newPairing, pairStep } from './pairing.ts';
 import { braceletMac, parseAlarm, summarize } from './signal.ts';
+import { addHearing, newPress, relayPlace } from './relay.ts';
 
 const MAC = '785005002D12';
 const press = (count) => ({ frame: 0x21, count });
@@ -49,3 +50,19 @@ const fee0 = { serviceData: { '0000fee0-0000-1000-8000-00805f9b34fb': b64([0x21,
 assert.deepEqual(parseAlarm(fee0), { frame: 0x21, triggered: true, count: 261 });
 
 console.log('bracelet check ok');
+
+// Volunteer relay: a new press is a count going up; the first packet counts only if its alarm flag is on
+const counts = new Map();
+assert.equal(newPress(counts, MAC, { frame: 0x21, triggered: false, count: 4 }), false);
+assert.equal(newPress(counts, MAC, { frame: 0x21, triggered: true, count: 4 }), false);
+assert.equal(newPress(counts, MAC, { frame: 0x21, triggered: true, count: 5 }), true);
+assert.equal(newPress(counts, MAC, { frame: 0x23, triggered: true, count: 9 }), false);
+assert.equal(newPress(new Map(), MAC, { frame: 0x21, triggered: true, count: 5 }), true);
+
+// Two volunteers 100 m apart: the place leans towards the stronger signal, which gets the report first
+let relay = addHearing(null, 'a', -80, { latitude: 24.9, longitude: 46.7 });
+relay = addHearing(relay, 'b', -60, { latitude: 24.901, longitude: 46.7 });
+const at = relayPlace(relay);
+assert.equal(relay.best, 'b');
+assert.deepEqual(relay.by, ['a', 'b']);
+assert.ok(at.latitude > 24.9005 && at.latitude < 24.901, String(at.latitude));

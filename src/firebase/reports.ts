@@ -5,7 +5,9 @@ import {
   collection, doc, getDoc, getDocs, onSnapshot, query, runTransaction, updateDoc, where, writeBatch, type DocumentSnapshot,
 } from 'firebase/firestore';
 import { auth, db } from './index';
-import type { ClosedAs, Health, Report } from '../mock';
+import type { ClosedAs, Health, Point, Report } from '../mock';
+import { addHearing, relayPlace } from '../ble/relay';
+import { areaOf } from './volunteers';
 
 export type NewReport = Omit<Report, 'id' | 'createdAt' | 'status' | 'assignedVolunteerId' | 'closedAs' | 'closedAt' | 'phone'> & {
   phone?: string | null;
@@ -137,4 +139,34 @@ export async function reuniteAtSecurity(id: string): Promise<void> {
   batch.delete(contactDoc(id));
   batch.delete(photoDoc(id));
   await batch.commit();
+}
+
+// A volunteer's phone heard an emergency press from a bracelet no family holds: every volunteer who hears the
+// same press writes to the same report, sos_<bracelet>_<press count>, adding their location to its place.
+// A bracelet a family holds is left to the family app (it gives the family 15 s to cancel a press by mistake).
+// ponytail: a held bracelet out of its family's range sends nothing; relay those too if that case matters
+export async function relaySos(mac: string, count: number, rssi: number, at: Point): Promise<void> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) return;
+  // A free bracelet reads as "does not exist"; one a family holds is refused (only that family may read it)
+  const held = await getDoc(doc(db, 'bracelets', mac)).then((d) => d.exists(), () => true);
+  if (held) return;
+  const ref = doc(reports, `sos_${mac}_${count}`);
+  await runTransaction(db, async (tx) => {
+    const old = (await tx.get(ref)).data() as Report | undefined;
+    if (old && (old.status !== 'open' || !old.relay || old.relay.by.includes(uid))) return;
+    const relay = addHearing(old?.relay ?? null, uid, rssi, at);
+    const location = relayPlace(relay);
+    if (old) {
+      tx.update(ref, { relay, location, area: areaOf(location) });
+      return;
+    }
+    // Nothing is known about the wearer but the bracelet: the volunteer goes to the place and sees.
+    // ponytail: kind 'elder' is a guess (children's bracelets are always held by a family)
+    tx.set(ref, {
+      type: 'emergency', braceletId: mac, member: { name: `صاحب السوار ${mac.slice(-4)}`, kind: 'elder', age: 0 },
+      description: '', area: areaOf(location), location, createdAt: Date.now(), familyId: null,
+      status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null, relay,
+    });
+  });
 }

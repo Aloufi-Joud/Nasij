@@ -57,9 +57,33 @@ service cloud.firestore {
       function isOwner() { return resource.data.familyId == me(); }
       function isAssigned() { return resource.data.assignedVolunteerId == me(); }
 
+      // An emergency press relayed by volunteers (src/ble/relay.ts): only for a bracelet no family holds, as
+      // sos_<bracelet>_<press count>, with this volunteer as its first and strongest hearer.
+      // ponytail: like sightings, the rules cannot check the phone really heard it; tied to the staff-assigned role
+      function relayCreate() {
+        let d = request.resource.data;
+        return isVolunteer() && d.keys().hasOnly(['type', 'braceletId', 'member', 'description', 'area', 'location',
+            'createdAt', 'familyId', 'status', 'assignedVolunteerId', 'closedAs', 'closedAt', 'relay'])
+          && d.type == 'emergency' && d.familyId == null && d.status == 'open' && d.assignedVolunteerId == null
+          && d.closedAs == null && d.closedAt == null && d.description == ''
+          && d.braceletId is string && d.braceletId.matches('[0-9A-F]{12}')
+          && id.matches('sos_' + d.braceletId + '_[0-9]+')
+          && !exists(/databases/$(database)/documents/bracelets/$(d.braceletId))
+          && short(d.member, 'name', 60) && short(d, 'area', 60)
+          && d.relay.by == [me()] && d.relay.best == me()
+          && d.createdAt is int && nearNow(d.createdAt);
+      }
+      // Another volunteer who heard the same press adds themselves (once) and moves the place
+      function relayJoin() {
+        let d = request.resource.data;
+        return isVolunteer() && resource.data.get('relay', null) != null && resource.data.status == 'open'
+          && changes(['relay', 'location', 'area']) && short(d, 'area', 60)
+          && !(me() in resource.data.relay.by) && d.relay.by == resource.data.relay.by.concat([me()]);
+      }
+
       // The bracelet (if any) must be one this family holds: otherwise anyone could report someone else's
       // bracelet and learn from volunteers' sightings where that person is
-      allow create: if signedIn()
+      allow create: if relayCreate() || signedIn()
         && request.resource.data.familyId == me()
         && request.resource.data.status == 'open'
         && request.resource.data.assignedVolunteerId == null
@@ -73,10 +97,12 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/reportLimits/$(me())).data.at == request.resource.data.createdAt
         && (!exists(/databases/$(database)/documents/reportLimits/$(me()))
             || get(/databases/$(database)/documents/reportLimits/$(me())).data.at != request.resource.data.createdAt);
-      // Volunteers see open cases (the report holds no health); security sees all
-      allow read: if signedIn() && (isOwner() || isSecurity() || (isVolunteer() && resource.data.status != 'closed'));
+      // Volunteers see open cases (the report holds no health); security sees all.
+      // A missing report reads as empty for volunteers, so a relay can check whether the press is already reported
+      allow read: if signedIn() && (resource == null || isOwner() || isSecurity() || (isVolunteer() && resource.data.status != 'closed'));
       allow update: if signedIn() && (
         isSecurity()
+        || relayJoin()
         // a volunteer takes an open case for themselves; the transaction makes it first come, first served
         || (isVolunteer() && resource.data.status == 'open'
             && request.resource.data.status == 'searching'

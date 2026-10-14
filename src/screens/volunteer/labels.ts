@@ -31,7 +31,7 @@ export function whoLine(r: Report) {
   return [
     KIND_UI[kind].label,
     gender && (gender === 'male' ? tr('ذكر', 'Male') : tr('أنثى', 'Female')),
-    tr(`${age} سنة`, `${age} yrs`),
+    age > 0 && tr(`${age} سنة`, `${age} yrs`), // 0 = unknown (a relayed press)
     language && tr(`يتكلم ${langName(language)}`, `Speaks ${langName(language)}`),
   ].filter(Boolean).join(' · ');
 }

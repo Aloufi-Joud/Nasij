@@ -314,6 +314,17 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 - **Bracelets free themselves after 12 hours:** the hourly cleanup deletes `bracelets/{mac}` locks linked more than 12 hours ago (`BRACELET_LOCK_MS` in `scripts/cleanup.mjs`), for families that left without "end of visit". The member who wore it gets `braceletId: null`, so the family app shows no bracelet next time it opens
 - **`sightings` readable by security only** (was: any volunteer too). Anyone can pick "volunteer" at login, so it exposed where every reported person was heard. The volunteer app never read it; `addSighting` still works
 
+**Changes on 2026-10-14: volunteers relay an emergency press** (Person 1, in Person 3's folder with Person 3's OK):
+
+- **Why:** an elder with no family phone (or no internet) presses the emergency button and nothing happened: only the family app turned a press into a report. The bracelet needs no internet, so now any on-duty volunteer's phone that hears the press sends it
+- **Only bracelets no family holds** (`bracelets/{mac}` missing). A held bracelet stays with the family app, which gives the family 15 s to cancel a press by mistake. Not covered yet: a held bracelet out of its family's range
+- **One report per press:** `reports/sos_<bracelet>_<press count>`, type `emergency`, `familyId: null`, name "صاحب السوار <last 4 of the number>", no photo or health. Every volunteer who hears the same press adds themselves to `report.relay` (in a transaction) instead of making another report
+- **Place:** the hearers' locations averaged, each weighted by signal (stronger = nearer), so four volunteers around the person give a better place than one. One hearer: their own location (the person is within about 30 m)
+- **Who gets it:** the strongest hearer (`relay.best`) at once, every volunteer after 20 s (`RELAY_FIRST_MS` in `VolunteerApp.tsx`). A press by mistake: the volunteer goes, sees, and closes it as "helped"
+- Files: `src/ble/relay.ts` (press detection and the weighted place, checked in `src/ble/check.mjs`), `relaySos` in `src/firebase/reports.ts`, `Relay` in `mock.ts`, the scan listener and alert order in `VolunteerApp.tsx`, `whoLine` hides an unknown age (0)
+- **`firestore.rules` changed, publish it:** volunteers may create a relay report (only for a free bracelet, with the right id, themselves as hearer, no extra fields) and join one once; a missing report reads as empty for volunteers. 10 tests added to `scripts/rules.test.mjs` (79 pass)
+- **Security, later:** like `sightings`, the rules cannot check that the phone really heard the press, so anyone who picks "volunteer" can make a relay report for a free bracelet. Tied to the staff-assigned volunteer role in section 11
+
 **Changes on 2026-10-14: last place heard on the family map** (branch `family-map-last-seen`):
 
 - **`firestore.rules` changed, publish it:** `reports/{id}/seen/last` may now also hold `location` = `{ latitude, longitude }` (nothing else inside). Tests added to `scripts/rules.test.mjs`

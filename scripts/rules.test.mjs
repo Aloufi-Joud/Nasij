@@ -174,3 +174,29 @@ allow('a volunteer writes their own status', () => as('vol').doc('volunteers/vol
 deny('a family pretends to be on duty', () => as('fam').doc('volunteers/fam').set({ onDuty: true, at: now() }));
 deny('a family reads volunteers\' locations', () => as('fam').doc('volunteers/vol').get());
 allow('anyone reads the event zones', () => as(null).doc('zones/z1').get());
+
+// Emergency press relayed by volunteers' phones (src/ble/relay.ts): only for a bracelet no family holds
+const hear = (uid, w = 0.001) => ({ by: [uid], best: uid, bestRssi: -60, w, lat: w * 24.9, lng: w * 46.7 });
+const relay = (uid, mac = FREE, id = `sos_${mac}_5`, extra = {}) =>
+  as(uid).doc(`reports/${id}`).set({
+    type: 'emergency', braceletId: mac, member: { name: 'صاحب السوار', kind: 'elder', age: 0 }, description: '',
+    area: '', location: { latitude: 24.9, longitude: 46.7 }, createdAt: now(), familyId: null,
+    status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null, relay: hear(uid), ...extra,
+  });
+const join = (uid) => async () => {
+  await relay('vol');
+  const by = ['vol', uid];
+  return as(uid).doc(`reports/sos_${FREE}_5`).update({ relay: { ...hear('vol', 0.002), by }, location: { latitude: 24.9, longitude: 46.7 }, area: '' });
+};
+const relayed = (fn) => async () => { await relay('vol'); return fn(); };
+allow('a volunteer checks whether a press is already reported', () => as('vol').doc(`reports/sos_${FREE}_5`).get());
+allow('a volunteer relays a press from a free bracelet', () => relay('vol'));
+deny('a volunteer relays a press from a bracelet a family holds', () => relay('vol', MINE));
+deny('a family relays a press', () => relay('fam'));
+deny('a relay under a made-up id', () => relay('vol', FREE, 'anything'));
+deny('a relay that names another volunteer as hearer', () => relay('vol', FREE, `sos_${FREE}_5`, { relay: hear('vol2') }));
+deny('a relay with extra fields', () => relay('vol', FREE, `sos_${FREE}_5`, { phone: '0500000000' }));
+test('allow: a second volunteer who heard it joins', () => assertSucceeds(join('vol2')()));
+test('deny: a volunteer joins twice', () => assertFails(join('vol')()));
+test('deny: a volunteer changes the status while joining', () =>
+  assertFails(relayed(() => as('vol2').doc(`reports/sos_${FREE}_5`).update({ status: 'closed' }))()));

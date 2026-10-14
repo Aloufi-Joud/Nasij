@@ -62,7 +62,12 @@ export type Report = {
   closedAt: number | null;
   reunitedAt?: number | null; // closed as 'security': when security handed the person to the family
   securityPoint?: string | null; // handed to security: where the family picks them up (zone and pavilion)
+  relay?: Relay; // sent by volunteers' phones (a bracelet no family holds), see src/ble/relay.ts
 };
+
+// Volunteers who heard a relayed emergency press: by = their ids, best = the strongest signal (nearest),
+// w/lat/lng = signal-weighted sums of their locations (location = lat / w, lng / w)
+export type Relay = { by: string[]; best: string; bestRssi: number; w: number; lat: number; lng: number };
 
 export type Volunteer = {
   id: string;

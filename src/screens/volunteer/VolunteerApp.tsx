@@ -17,8 +17,8 @@ import type { ClosedAs, Language, PasserbyReport, Point, Report } from '../../mo
 import { signOut } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { loadProfile, type Profile } from '../../firebase/profile';
-import { acceptReport, closeReport, getReportHealth, getReportPhone, getReportPhoto, subscribeOpenReports } from '../../firebase/reports';
-import { areaOf, goOffDuty, goOnDuty, loadLanguages, renameOnDuty, saveLanguages, updateVolunteerLocation } from '../../firebase/volunteers';
+import { acceptReport, closeReport, getReportHealth, getReportPhone, getReportPhoto, relaySos, subscribeOpenReports } from '../../firebase/reports';
+import { areaOf, goOffDuty, goOnDuty, lastVolunteerLocation, loadLanguages, renameOnDuty, saveLanguages, updateVolunteerLocation } from '../../firebase/volunteers';
 import { subscribePasserbyReports } from '../../firebase/passerby';
 import { addSighting } from '../../firebase/sightings';
 import AccountScreen from './AccountScreen';
@@ -30,7 +30,8 @@ import ProximityScreen from './ProximityScreen';
 import PasserbyModal from './PasserbyModal';
 import { CLOSED_UI, TYPE_UI, clock, since } from './labels';
 import { listen, useBraceletSignal } from '../../ble/scanner';
-import { braceletMac } from '../../ble/signal';
+import { braceletMac, parseAlarm } from '../../ble/signal';
+import { newPress } from '../../ble/relay';
 import { isEn, tr } from '../../i18n';
 
 type Tab = 'duty' | 'case' | 'history' | 'account';
@@ -41,6 +42,9 @@ type Closed = { id: string; name: string; type: Report['type']; closedAs: Closed
 // Volunteers who speak the member's language get a new report first, everyone else this much later.
 // ponytail: 15 s for testing; a minute or two at the event
 const LANGUAGE_FIRST_MS = 15_000;
+// An emergency press relayed by volunteers' phones goes first to the one who heard it strongest (the nearest),
+// to every volunteer after this long if they haven't taken it
+const RELAY_FIRST_MS = 20_000;
 
 const vibrateFor = (r: Report) => alarm(r.type === 'lost' ? [0, 400, 200, 400] : [0, 800, 300, 800, 300, 800]);
 
@@ -137,7 +141,8 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
   useEffect(() => {
     if (!onDuty || active || shownId) return;
     const next = open.find(
-      (r) => r.status === 'open' && !skipped.current.has(r.id) && (speaks(r) || now - r.createdAt >= LANGUAGE_FIRST_MS),
+      (r) => r.status === 'open' && !skipped.current.has(r.id) && (speaks(r) || now - r.createdAt >= LANGUAGE_FIRST_MS)
+        && (!r.relay || r.relay.best === uid || now - r.createdAt >= RELAY_FIRST_MS),
     );
     if (!next) return;
     setShownId(next.id);
@@ -226,8 +231,10 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
   }, [activeId, photoLoaded, step]);
 
   // Search network: while on duty, this phone reports every open report's bracelet it hears as a sighting,
-  // even for cases taken by someone else. Other bracelets are ignored. addSighting keeps it to one write
-  // per report every 10 s and uses the latest on-duty location.
+  // even for cases taken by someone else. addSighting keeps it to one write per report every 10 s and uses
+  // the latest on-duty location.
+  // It also relays a new emergency press from any bracelet (relaySos skips the ones a family holds), so a
+  // person with no family phone or internet still reaches the volunteers around them.
   const openRef = useRef<Report[]>([]);
   useEffect(() => {
     openRef.current = open;
@@ -237,12 +244,17 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
     const reportOf = (mac: string) => openRef.current.find((r) => r.braceletId.toUpperCase() === mac);
     // iPhone hides the MAC: learn the phone-side id from EA00, then match the other packets by id
     const ids = new Map<string, string>();
+    const counts = new Map<string, number>(); // last press count heard per bracelet
     return listen((d) => {
       const mac = braceletMac(d);
-      if (mac && reportOf(mac)) ids.set(d.id, mac);
+      if (mac) ids.set(d.id, mac);
       const b = ids.get(d.id);
-      const r = b && reportOf(b);
-      if (r && d.rssi != null) addSighting(r.id, d.rssi).catch(() => {});
+      if (!b || d.rssi == null) return;
+      const r = reportOf(b);
+      if (r) addSighting(r.id, d.rssi).catch(() => {});
+      const a = parseAlarm(d);
+      const at = lastVolunteerLocation();
+      if (newPress(counts, b, a) && a && at) relaySos(b, a.count, d.rssi, at).catch(() => {});
     });
   }, [onDuty]);
 
