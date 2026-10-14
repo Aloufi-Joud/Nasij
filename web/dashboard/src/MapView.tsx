@@ -29,12 +29,13 @@ export default function MapView({ zones, reports, volunteers, lastSignal, select
   pick.current = onSelect;
 
   useEffect(() => {
-    const m = L.map(box.current!, { zoomControl: true, attributionControl: false, zoomSnap: 0.25 }).setView(at(SITE.center), 15);
+    const m = L.map(box.current!, { zoomControl: true, attributionControl: false, zoomSnap: 0.25, maxZoom: 18, maxBoundsViscosity: 1 }).setView(at(SITE.center), 15);
 
     // reports and their rings sit above the walking volunteers so they stay clickable
     m.createPane('reports').style.zIndex = '450';
     m.createPane('labels').style.zIndex = '440';
-    const bounds = drawExpoSite(m, zones);
+    const { view, world } = drawExpoSite(m, zones);
+    m.setMaxBounds(world);
     // one name per zone: in the middle of its slice, or at the top of the central plaza
     for (const z of zones) {
       const hub = !zoneColour(z.id);
@@ -45,7 +46,7 @@ export default function MapView({ zones, reports, volunteers, lastSignal, select
         .setContent(label)
         .addTo(m);
     }
-    m.fitBounds(bounds, { padding: [24, 24] });
+    m.fitBounds(view, { padding: [24, 24] });
     // names need room: compact when the core is small on screen (phones), hidden when zoomed far out
     const fit = () => {
       const px = m.latLngToContainerPoint(at(offset(SITE.center, SITE.radius, 0))).x - m.latLngToContainerPoint(at(SITE.center)).x;
@@ -53,9 +54,11 @@ export default function MapView({ zones, reports, volunteers, lastSignal, select
       box.current?.classList.toggle('compact', px < 200);
     };
     m.on('zoomend', fit);
-    // the grid settles after the map is created; keep Leaflet's size (and the label mode) in step
+    // the grid settles after the map is created; keep Leaflet's size (and the label mode) in step,
+    // and never zoom out past the drawn area, so its edge never shows
     const resize = new ResizeObserver(() => {
       m.invalidateSize();
+      m.setMinZoom(m.getBoundsZoom(world, true));
       fit();
     });
     resize.observe(box.current!);
