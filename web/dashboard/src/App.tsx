@@ -151,7 +151,7 @@ export default function App() {
             setSound(!sound);
           }}
         >
-          {sound ? 'التنبيه الصوتي يعمل' : 'التنبيه الصوتي موقوف'}
+          {sound ? 'التنبيه الصوتي يعمل' : 'التنبيه الصوتي متوقف'}
         </button>
         <dl className="stats">
           <div>
