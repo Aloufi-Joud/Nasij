@@ -55,8 +55,9 @@ function useCollection<T>(name: string, ...filters: ReturnType<typeof where>[]):
   return rows;
 }
 
-// ponytail: demo mode, no login and mock data, only in `npm run dev`. Remove once a security account exists.
-export const DEMO = import.meta.env.DEV;
+// Demo mode: no login, made-up data only (nothing from Firestore). In `npm run dev`, or on the live site with
+// ?demo for showing the judges: more reports, two that arrive during the demo, and assigned volunteers walk to the case
+export const DEMO = import.meta.env.DEV || new URLSearchParams(location.search).has('demo');
 
 // One finished case (timeline and "found in" time without a bracelet) and one child waiting at the security point
 const t = Date.now() - 20 * 60_000;
@@ -69,12 +70,74 @@ const demoClosed: Report[] = [
   },
 ];
 
+// More made-up cases and volunteers spread over the zones
+const zoneAt = (i: number, metres: number, deg: number) => offset(zones[i].center, metres, deg);
+const demoReport = (id: string, type: Report['type'], name: string, kind: Member['kind'], age: number, zone: number, where: string, description: string, minutesAgo: number, deg: number): Report => ({
+  id, type, braceletId: `DEMO${id.toUpperCase()}`, member: { name, kind, age }, photo: null, description, health: null, phone: null,
+  area: `${zones[zone].name}، ${where}`, location: zoneAt(zone, 70, deg), createdAt: Date.now() - minutesAgo * 60_000,
+  status: 'open', assignedVolunteerId: null, closedAs: null, closedAt: null,
+});
+const demoReports: Report[] = [
+  ...mockReports,
+  demoReport('r5', 'lost', 'ليان', 'child', 4, 2, 'عند جناح الروبوتات', 'بلوزة زهرية وتنورة بيضاء، تحمل دمية صغيرة', 4, 200),
+  demoReport('r6', 'lost', 'سعد', 'elder', 81, 4, 'قرب الحديقة العمودية', 'ثوب رمادي ونظارة طبية، ضعيف السمع', 9, 120),
+  demoReport('r7', 'lost', 'عمر', 'child', 7, 3, 'عند مدخل الأجنحة الدولية', 'تيشيرت أخضر عليه شعار إكسبو وكاب أسود', 0.5, 300),
+];
+// arrive while the demo runs: [seconds after opening, report]
+const arriving: [number, () => Report][] = [
+  [40, () => demoReport('r8', 'lost', 'نورة', 'child', 5, 0, 'قرب المسرح المفتوح', 'فستان أبيض بنقاط حمراء وصندل وردي', 0, 160)],
+  [100, () => demoReport('r9', 'fall', 'محمد', 'elder', 70, 1, 'منطقة المطاعم', 'ثوب أبيض وعصا خشبية', 0, 20)],
+];
+const demoVolunteers: Volunteer[] = [
+  ...mockVolunteers.filter((x) => x.onDuty),
+  { id: 'v4', name: 'متطوع ٤', onDuty: true, area: zones[3].name, location: zoneAt(3, 150, 0) },
+  { id: 'v5', name: 'متطوع ٥', onDuty: true, area: zones[4].name, location: zoneAt(4, 120, 90) },
+  { id: 'v6', name: 'متطوع ٦', onDuty: true, area: zones[0].name, location: zoneAt(0, 160, 300) },
+];
+const WALK = 2; // metres per 250 ms tick: a brisk walk sped up for the demo
+const HEAR = 40; // the volunteer's phone picks up the bracelet this close
+
 function useMock() {
-  const [reports, setReports] = useState(mockReports);
+  const [reports, setReports] = useState(demoReports);
   const [closed, setClosed] = useState(demoClosed);
+  const [volunteers, setVolunteers] = useState(demoVolunteers);
+  const [sightings, setSightings] = useState<Sighting[]>(() =>
+    zones.slice(0, 2).map((z, i) => ({ id: `ds${i}`, reportId: 'demo-closed', volunteerId: v.id, rssi: -70, at: t + (90 + i * 60) * 1000, area: z.name, location: z.center })),
+  );
+  useEffect(() => {
+    const timers = arriving.map(([sec, make]) => setTimeout(() => setReports((rs) => [...rs, make()]), sec * 1000));
+    return () => timers.forEach(clearTimeout);
+  }, []);
+  // Each assigned volunteer walks straight to their case; near it, their phone hears the bracelet once
+  useEffect(() => {
+    const tick = setTimeout(() => {
+      const heard: Sighting[] = [];
+      const next = volunteers.map((x) => {
+        const r = reports.find((r) => r.assignedVolunteerId === x.id && r.location);
+        if (!r?.location) return x;
+        const d = metresBetween(x.location, r.location);
+        if (d < HEAR && !sightings.some((s) => s.reportId === r.id && s.volunteerId === x.id)) {
+          heard.push({ id: `s-${r.id}-${x.id}`, reportId: r.id, volunteerId: x.id, rssi: -62, at: Date.now(), area: zoneOf(r.location)?.name ?? r.area, location: r.location });
+        }
+        if (d <= 6) return x;
+        const k = Math.min(WALK, d - 6) / d;
+        const location = { latitude: x.location.latitude + (r.location.latitude - x.location.latitude) * k, longitude: x.location.longitude + (r.location.longitude - x.location.longitude) * k };
+        return { ...x, location, area: zoneOf(location)?.name ?? x.area };
+      });
+      if (next.some((x, i) => x !== volunteers[i])) setVolunteers(next);
+      if (heard.length) setSightings((ss) => [...ss, ...heard]);
+    }, 250);
+    return () => clearTimeout(tick);
+  }, [volunteers, reports, sightings]);
   const memberOf = (braceletId: string) => mockMembers.find((m) => m.braceletId?.toUpperCase() === braceletId.toUpperCase());
-  const events: LiveEvent[] = reports.map((r) => ({ id: r.id, at: r.createdAt, kind: 'report' as const, reportId: r.id, text: `بلاغ جديد: ${r.member.name}، ${TYPE[r.type]}` }));
-  const sightings: Sighting[] = zones.slice(0, 2).map((z, i) => ({ id: `ds${i}`, reportId: 'demo-closed', volunteerId: v.id, rssi: -70, at: t + (90 + i * 60) * 1000, area: z.name, location: z.center }));
+  const name = (id: string) => volunteers.find((x) => x.id === id)?.name ?? 'متطوع';
+  const events: LiveEvent[] = [
+    ...reports.map((r) => ({ id: r.id, at: r.createdAt, kind: 'report' as const, reportId: r.id, text: `بلاغ جديد: ${r.member.name}، ${TYPE[r.type]}` })),
+    ...sightings.flatMap((s) => {
+      const r = reports.find((x) => x.id === s.reportId);
+      return r ? [{ id: s.id, at: s.at, kind: 'signal' as const, reportId: r.id, text: `${name(s.volunteerId)} التقط إشارة سوار ${r.member.name} في ${s.area}` }] : [];
+    }),
+  ].sort((a, b) => b.at - a.at);
   const actions = {
     assign: async (id: string, volunteerId: string) =>
       setReports((rs) => rs.map((r) => (r.id === id ? { ...r, status: 'searching' as const, assignedVolunteerId: volunteerId, acceptedAt: Date.now() } : r))),
@@ -83,7 +146,7 @@ function useMock() {
     phoneOf: async () => '0500000000',
     photoOf: async (id: string) => [...reports, ...closed].find((r) => r.id === id)?.photo ?? null,
   };
-  return { reports, closed, sightings, volunteers: mockVolunteers.filter((x) => x.onDuty), passerby: mockPasserby, alerts: [] as (PasserbyAlert & { id: string })[], events, memberOf, ...actions };
+  return { reports, closed, sightings, volunteers, passerby: mockPasserby, alerts: [] as (PasserbyAlert & { id: string })[], events, memberOf, ...actions };
 }
 
 export const useLive = DEMO ? useMock : useFirestore;

@@ -95,7 +95,11 @@ function useSelected(open: Report[]) {
     return () => removeEventListener('popstate', onPop);
   }, []);
   const select = (next: string | null) => {
-    history.pushState(null, '', next ? `?r=${next}` : location.pathname);
+    // keep other parameters (?demo) in the link
+    const q = new URLSearchParams(location.search);
+    if (next) q.set('r', next);
+    else q.delete('r');
+    history.pushState(null, '', q.size ? `?${q}` : location.pathname);
     setId(next);
   };
   return [open.find((r) => r.id === id) ?? null, select] as const;
