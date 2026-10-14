@@ -31,8 +31,8 @@ const LAST_SEEN_RADIUS_M = 30; // the rounded location (about 20 m) plus how far
 
 export default function MapScreen({ members, live, me, eventCenter, seen, now, shown }: Props) {
   const liveOf = (m: FamMember) => (m.mac ? live[m.mac] : undefined);
-  // The circles drawn while the map was hidden do not come back when it is shown again,
-  // so every visit gets new keys and the circles are drawn afresh
+  // The circles do not come back when the hidden map is shown again (new keys for the circles alone
+  // did not help on the phone), so the map itself is built afresh on every visit, like the first open
   const [visit, setVisit] = useState(0);
   const [wasShown, setWasShown] = useState(shown);
   if (shown !== wasShown) {
@@ -49,6 +49,7 @@ export default function MapScreen({ members, live, me, eventCenter, seen, now, s
       <View style={[s.mapBox, { height: 420 }]}>
         {me ? (
           <MapView
+            key={visit}
             style={StyleSheet.absoluteFill}
             showsUserLocation
             initialRegion={{ ...me, latitudeDelta: 0.0004, longitudeDelta: 0.0004 }}
@@ -70,8 +71,8 @@ export default function MapScreen({ members, live, me, eventCenter, seen, now, s
               if (!l?.zone) return null;
               const color = ZONE_UI[l.zone].color;
               return [
-                <Circle key={`c-${m.id}-${visit}`} center={me} radius={l.radius} strokeColor={color} strokeWidth={2} fillColor={CIRCLE_FILL[l.zone]} />,
-                <Marker key={`n-${m.id}-${visit}`} coordinate={offset(me, l.radius, (i * 70) % 360)} anchor={{ x: 0.5, y: 0.5 }}>
+                <Circle key={`c-${m.id}`} center={me} radius={l.radius} strokeColor={color} strokeWidth={2} fillColor={CIRCLE_FILL[l.zone]} />,
+                <Marker key={`n-${m.id}`} coordinate={offset(me, l.radius, (i * 70) % 360)} anchor={{ x: 0.5, y: 0.5 }}>
                   <View style={[s.mapName, { borderColor: color }]}>
                     <Text style={[s.mapNameText, { color }]}>{m.name}</Text>
                   </View>
@@ -82,8 +83,8 @@ export default function MapScreen({ members, live, me, eventCenter, seen, now, s
               const p = seen[m.id]?.location;
               if (!p) return null;
               return [
-                <Circle key={`sc-${m.id}-${visit}`} center={p} radius={LAST_SEEN_RADIUS_M} strokeColor={C.danger} strokeWidth={2} lineDashPattern={[6, 4]} fillColor="rgba(192,57,43,0.12)" />,
-                <Marker key={`sn-${m.id}-${visit}`} coordinate={p} anchor={{ x: 0.5, y: 0.5 }}>
+                <Circle key={`sc-${m.id}`} center={p} radius={LAST_SEEN_RADIUS_M} strokeColor={C.danger} strokeWidth={2} lineDashPattern={[6, 4]} fillColor="rgba(192,57,43,0.12)" />,
+                <Marker key={`sn-${m.id}`} coordinate={p} anchor={{ x: 0.5, y: 0.5 }}>
                   <View style={[s.mapName, { borderColor: C.danger }]}>
                     <Text style={[s.mapNameText, { color: C.danger }]}>{tr(`آخر إشارة: ${m.name}`, `Last heard: ${m.name}`)}</Text>
                   </View>

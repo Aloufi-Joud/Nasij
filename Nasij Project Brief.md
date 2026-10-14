@@ -319,7 +319,7 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 - **`firestore.rules` changed, publish it:** `reports/{id}/seen/last` may now also hold `location` = `{ latitude, longitude }` (nothing else inside). Tests added to `scripts/rules.test.mjs`
 - `addSighting` (`src/firebase/sightings.ts`, no change in how it is called) now also writes the volunteer's location **rounded to about 20 m** into `seen/last`. The exact location still goes only to `sightings` (security). The bracelet has no GPS, so this location is the volunteer's phone
 - **Family map:** a member with an open report gets a red dashed circle (30 m) labelled "Last heard: <name>" where a volunteer last heard the bracelet, and a line under the map with the zone and how long ago. Nothing changes on the volunteer side
-- **Fix:** the bracelet circles around the parent disappeared the second time the map tab was opened (the map stays mounted and is hidden, and the circles drawn while it was hidden did not come back). They are now drawn afresh on every visit
+- **Fix:** the bracelet circles around the parent disappeared the second time the map tab was opened (the map stays mounted and is hidden, and the circles drawn while it was hidden did not come back). The map is now built afresh on every visit (redrawing only the circles did not fix it on the phone)
 
 **Changes on 2026-10-13: warning with the phone locked** (branch `locked-phone-beacon`):
 
