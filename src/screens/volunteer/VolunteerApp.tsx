@@ -12,6 +12,7 @@ import * as Location from 'expo-location';
 import { C, F, ui } from '../../theme';
 import { Header, HeaderButton, Pill } from '../../components/Header';
 import { BottomNav } from '../../components/BottomNav';
+import { alarm } from '../../components/alarm';
 import type { ClosedAs, Language, PasserbyReport, Point, Report } from '../../mock';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../firebase';
@@ -41,7 +42,7 @@ type Closed = { id: string; name: string; type: Report['type']; closedAs: Closed
 // ponytail: 15 s for testing; a minute or two at the event
 const LANGUAGE_FIRST_MS = 15_000;
 
-const vibrateFor = (r: Report) => Vibration.vibrate(r.type === 'lost' ? [0, 400, 200, 400] : [0, 800, 300, 800, 300, 800]);
+const vibrateFor = (r: Report) => alarm(r.type === 'lost' ? [0, 400, 200, 400] : [0, 800, 300, 800, 300, 800]);
 
 // onLogout: back to the login screen (App.tsx); without it the account tab has no logout row
 export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?: () => void; onLogout?: () => void }) {
@@ -255,7 +256,7 @@ export default function VolunteerApp({ onSwitchRole, onLogout }: { onSwitchRole?
   useEffect(() => {
     // A new passer-by report: vibrate and open the box with its point on the map, whatever tab is open
     if (passerby.length > seenPasserby.current) {
-      Vibration.vibrate([0, 300, 150, 300, 150, 300]);
+      alarm([0, 300, 150, 300, 150, 300]);
       setPasserbyShown(passerby[0]);
     }
     seenPasserby.current = passerby.length;
