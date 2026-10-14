@@ -149,6 +149,10 @@ allow('security reads the health note', () => as('sec').doc('reports/r2/private/
 allow('the family reads its health note', () => as('fam').doc('reports/r2/private/health').get());
 deny('the volunteer reads the handover code', () => as('vol').doc('reports/r2/handover/654321').get());
 allow('the family reads its handover code', () => as('fam').doc('reports/r2/handover/654321').get());
+allow('a volunteer writes last seen with a rounded location', () =>
+  as('vol2').doc('reports/r1/seen/last').set({ area: 'منطقة', at: now(), location: { latitude: 24.95, longitude: 46.7 } }));
+deny('last seen with the volunteer in the location', () =>
+  as('vol2').doc('reports/r1/seen/last').set({ area: '', at: now(), location: { latitude: 24.95, longitude: 46.7, volunteerId: 'vol2' } }));
 
 // Sightings: volunteers write, only security reads
 const sighting = (volunteerId) => ({ volunteerId, reportId: 'r1', at: now(), location: null });

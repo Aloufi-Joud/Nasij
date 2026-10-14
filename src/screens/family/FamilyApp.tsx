@@ -1214,7 +1214,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
         {/* The map stays mounted once opened and is only hidden, so it does not rebuild on every visit */}
         {mapSeen && (
           <View style={{ display: !screen && tab === 'map' ? 'flex' : 'none' }}>
-            <MapScreen members={members} live={live} me={me} eventCenter={eventCenter} />
+            <MapScreen members={members} live={live} me={me} eventCenter={eventCenter} seen={seen} now={now} shown={!screen && tab === 'map'} />
           </View>
         )}
       </ScrollView>

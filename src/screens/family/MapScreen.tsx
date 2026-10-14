@@ -1,10 +1,13 @@
-// Map tab: one circle per bracelet around the parent, inside the event boundary
+// Map tab: one circle per bracelet around the parent, inside the event boundary,
+// and for a reported member, where a volunteer's phone last heard the bracelet
+import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Text } from '../../components/Text';
 import MapView, { Circle, Marker } from 'react-native-maps';
 import { C, ui } from '../../theme';
 import type { Point } from '../../mock';
-import { tr } from '../../i18n';
+import { place, tr } from '../../i18n';
+import type { LastSeen } from '../../firebase/sightings';
 import { EVENT_RADIUS_M, ZONE_UI, offset, type FamMember, type Live, type Zone } from './shared';
 
 const CIRCLE_FILL: Record<Zone, string> = {
@@ -14,10 +17,32 @@ const CIRCLE_FILL: Record<Zone, string> = {
   LOST: 'rgba(192,57,43,0.10)',
 };
 
-type Props = { members: FamMember[]; live: Record<string, Live>; me: Point | null; eventCenter: Point | null };
+type Props = {
+  members: FamMember[];
+  live: Record<string, Live>;
+  me: Point | null;
+  eventCenter: Point | null;
+  seen: Record<string, LastSeen | null>; // by member id, only members with an open report
+  now: number;
+  shown: boolean; // the tab stays mounted and is hidden with display: none
+};
 
-export default function MapScreen({ members, live, me, eventCenter }: Props) {
+const LAST_SEEN_RADIUS_M = 30; // the rounded location (about 20 m) plus how far the volunteer's phone hears the bracelet
+
+export default function MapScreen({ members, live, me, eventCenter, seen, now, shown }: Props) {
   const liveOf = (m: FamMember) => (m.mac ? live[m.mac] : undefined);
+  // The circles drawn while the map was hidden do not come back when it is shown again,
+  // so every visit gets new keys and the circles are drawn afresh
+  const [visit, setVisit] = useState(0);
+  const [wasShown, setWasShown] = useState(shown);
+  if (shown !== wasShown) {
+    setWasShown(shown);
+    if (shown) setVisit((v) => v + 1);
+  }
+  const ago = (at: number) => {
+    const min = Math.max(0, Math.floor((now - at) / 60_000));
+    return min < 1 ? tr('الآن', 'just now') : tr(`قبل ${min} د`, `${min} min ago`);
+  };
   return (
     <>
       <Text style={ui.sectionTitle}>{tr('خريطة العائلة', 'Family map')}</Text>
@@ -45,10 +70,22 @@ export default function MapScreen({ members, live, me, eventCenter }: Props) {
               if (!l?.zone) return null;
               const color = ZONE_UI[l.zone].color;
               return [
-                <Circle key={`c-${m.id}`} center={me} radius={l.radius} strokeColor={color} strokeWidth={2} fillColor={CIRCLE_FILL[l.zone]} />,
-                <Marker key={`n-${m.id}`} coordinate={offset(me, l.radius, (i * 70) % 360)} anchor={{ x: 0.5, y: 0.5 }}>
+                <Circle key={`c-${m.id}-${visit}`} center={me} radius={l.radius} strokeColor={color} strokeWidth={2} fillColor={CIRCLE_FILL[l.zone]} />,
+                <Marker key={`n-${m.id}-${visit}`} coordinate={offset(me, l.radius, (i * 70) % 360)} anchor={{ x: 0.5, y: 0.5 }}>
                   <View style={[s.mapName, { borderColor: color }]}>
                     <Text style={[s.mapNameText, { color }]}>{m.name}</Text>
+                  </View>
+                </Marker>,
+              ];
+            })}
+            {members.map((m) => {
+              const p = seen[m.id]?.location;
+              if (!p) return null;
+              return [
+                <Circle key={`sc-${m.id}-${visit}`} center={p} radius={LAST_SEEN_RADIUS_M} strokeColor={C.danger} strokeWidth={2} lineDashPattern={[6, 4]} fillColor="rgba(192,57,43,0.12)" />,
+                <Marker key={`sn-${m.id}-${visit}`} coordinate={p} anchor={{ x: 0.5, y: 0.5 }}>
+                  <View style={[s.mapName, { borderColor: C.danger }]}>
+                    <Text style={[s.mapNameText, { color: C.danger }]}>{tr(`آخر إشارة: ${m.name}`, `Last heard: ${m.name}`)}</Text>
                   </View>
                 </Marker>,
               ];
@@ -58,6 +95,16 @@ export default function MapScreen({ members, live, me, eventCenter }: Props) {
           <Text style={s.mapWait}>{tr('جاري تحديد موقعك...', 'Finding your location...')}</Text>
         )}
       </View>
+      {members.map((m) => {
+        const x = seen[m.id];
+        if (!x?.location) return null;
+        const where = x.area ? tr(` في ${place(x.area)}`, ` in ${place(x.area)}`) : '';
+        return (
+          <Text key={`s-${m.id}`} style={[s.mapNote, { color: C.danger }]}>
+            {tr(`متطوع سمع سوار ${m.name}${where} ${ago(x.at)}`, `A volunteer heard ${m.name}’s bracelet${where} ${ago(x.at)}`)}
+          </Text>
+        );
+      })}
       {members.map((m) => {
         const l = liveOf(m);
         if (!l?.zone) return null;

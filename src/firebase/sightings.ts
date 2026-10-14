@@ -9,10 +9,13 @@ import type { Point, Sighting } from '../mock';
 export const SIGHTING_EVERY_MS = 10_000;
 
 const sightings = collection(db, 'sightings');
-// What the family sees: the area and time only, never the volunteer or their exact location
+// What the family sees: the area, the time and a rounded location, never the volunteer or their exact location
 const lastSeenDoc = (reportId: string) => doc(db, 'reports', reportId, 'seen', 'last');
 
-export type LastSeen = { area: string; at: number };
+export type LastSeen = { area: string; at: number; location?: Point };
+// The bracelet has no GPS: the location is the volunteer's phone, so the family gets it rounded to about 20 m
+// (0.0002° ≈ 22 m north-south, a bit less east-west near Riyadh)
+const rough = (x: number) => Math.round(x * 5000) / 5000;
 const lastSent = new Map<string, number>(); // reportId → time of the last write
 
 // Writes a sighting and returns true, or returns false without writing when:
@@ -31,7 +34,7 @@ export async function addSighting(
   const s: Omit<Sighting, 'id'> = { reportId, volunteerId, rssi, at, area: areaOf(location), location };
   const batch = writeBatch(db);
   batch.set(doc(sightings), s);
-  batch.set(lastSeenDoc(reportId), { area: s.area, at });
+  batch.set(lastSeenDoc(reportId), { area: s.area, at, location: { latitude: rough(location.latitude), longitude: rough(location.longitude) } });
   await batch.commit();
   return true;
 }
