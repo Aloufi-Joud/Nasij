@@ -6,7 +6,8 @@ export const LOST_AFTER_MS = 20000; // no packet for 20 s = signal lost (the bra
 export const WINDOW = 6; // average the last 6 readings
 
 export type Trend = 'approaching' | 'away' | 'steady';
-export type Signal = { rssi: number; smooth: number; trend: Trend; lastSeen: number };
+// recent = average of the last 3 only: reacts faster when walking (the volunteer's distance)
+export type Signal = { rssi: number; smooth: number; recent: number; trend: Trend; lastSeen: number };
 
 function avg(list: number[]) {
   return list.reduce((a, b) => a + b, 0) / list.length;
@@ -14,10 +15,11 @@ function avg(list: number[]) {
 
 // Smoothed signal and direction from the last WINDOW readings.
 // Direction: last 3 readings vs the average of all 6, ±3 dB (the agreed method).
-export function summarize(history: number[]): { smooth: number; trend: Trend } {
+export function summarize(history: number[]): { smooth: number; recent: number; trend: Trend } {
   const full = avg(history);
-  const diff = avg(history.slice(-3)) - full;
-  return { smooth: Math.round(full), trend: diff > 3 ? 'approaching' : diff < -3 ? 'away' : 'steady' };
+  const last3 = avg(history.slice(-3));
+  const diff = last3 - full;
+  return { smooth: Math.round(full), recent: Math.round(last3), trend: diff > 3 ? 'approaching' : diff < -3 ? 'away' : 'steady' };
 }
 
 function toBytes(b64: string) {

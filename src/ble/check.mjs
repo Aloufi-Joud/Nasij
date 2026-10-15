@@ -41,6 +41,7 @@ assert.equal(summarize([-80, -80, -80, -70, -70, -70]).trend, 'approaching');
 assert.equal(summarize([-70, -70, -70, -80, -80, -80]).trend, 'away');
 assert.equal(summarize([-70, -71, -70, -71, -70, -71]).trend, 'steady');
 assert.equal(summarize([-70, -72]).smooth, -71);
+assert.equal(summarize([-80, -80, -80, -70, -70, -70]).recent, -70);
 
 // Packets: MAC from the last 6 bytes of EA00, alarm from FEE0
 const b64 = (bytes) => btoa(String.fromCharCode(...bytes));

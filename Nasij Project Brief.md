@@ -373,6 +373,12 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
   3. In `VolunteerApp.tsx`, pass `metres={here && incoming.location ? metresBetween(here, incoming.location) : null}` to `<AlertCard>` (`metresBetween` from `../../components/geo`).
 - No change to the rules, data or other screens. With no location (permission off, or a report without a position), the line is hidden.
 
+**Proposal for Person 3, 2026-10-15: distance reacts faster while walking** (your folder, not done for you):
+
+- **Today:** the proximity screen shows distance and bars from `signal.smooth`, the average of the last 6 readings. The bracelet sends slowly, so walking towards it shows "closer" only several seconds later.
+- **Done in `src/ble/signal.ts` (Person 1):** `Signal` now also has `recent`, the average of the last 3 readings only. `smooth` and the direction (`trend`) are unchanged, and the family app stays on 6.
+- **How:** in `src/screens/volunteer/ProximityScreen.tsx` (lines 55-56), use `signal.recent` instead of `signal.smooth` for `bars(...)` and `estimateMetres(...)`. Optional: the same in `zoneOf` in `signalView.ts`. The number will jump a little more when standing still; that is the trade-off.
+
 **Changes on 2026-10-12 that affect everyone** (branch `lost-signal-20s`):
 
 - **Volunteer notices follow the language switch** (part of the app-wide language work; touches `DutyScreen.tsx` and `VolunteerApp.tsx` in Person 3's folder): `Notice.text` in `DutyScreen.tsx` is now a function, `() => tr('…', '…')`, read when the notice is drawn. Before, the text was translated once when the notice was made, so a "report closed" notice stayed in Arabic after switching to English. New notices: pass `text: () => tr(...)`, and `endCase` / `dropShown` take the same kind of function
