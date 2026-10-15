@@ -4,57 +4,22 @@ import type { Device } from 'react-native-ble-plx';
 
 export const LOST_AFTER_MS = 20000; // no packet for 20 s = signal lost (the bracelet calls slowly; 10 s gave false alarms with it beside the phone)
 export const WINDOW = 6; // average the last 6 readings
-export const TREND_MS = 5000; // direction looks at the last 5 s of readings
-export const TREND_HOLD_MS = 2000; // a new direction shows only once it has held 2 s
 
 export type Trend = 'approaching' | 'away' | 'steady';
-export type Reading = { rssi: number; t: number };
 // recent = average of the last 3 only: reacts faster when walking (the volunteer's distance)
-// next / nextSince = the direction waiting to be shown, and since when
-export type Signal = {
-  rssi: number;
-  smooth: number;
-  recent: number;
-  trend: Trend;
-  next: Trend;
-  nextSince: number;
-  lastSeen: number;
-};
+export type Signal = { rssi: number; smooth: number; recent: number; trend: Trend; lastSeen: number };
 
 function avg(list: number[]) {
   return list.reduce((a, b) => a + b, 0) / list.length;
 }
 
-// Keep the last WINDOW readings, plus everything from the last TREND_MS
-export function addReading(history: Reading[], rssi: number, t: number): Reading[] {
-  const h = [...history, { rssi, t }];
-  return h.filter((r, i) => i >= h.length - WINDOW || t - r.t <= TREND_MS);
-}
-
-// Raw direction: newer half of the last 5 s vs the older half, ±3 dB (the agreed method since 2026-10-15).
-// The halves don't overlap, so the whole change counts, and 5 s lets a slow walk in from far add up:
-// far away each metre moves the signal only a little, close by a lot.
-function rawTrend(history: Reading[], t: number): Trend {
-  const mid = t - TREND_MS / 2;
-  const span = history.filter((r) => t - r.t <= TREND_MS);
-  const older = span.filter((r) => r.t < mid).map((r) => r.rssi);
-  const newer = span.filter((r) => r.t >= mid).map((r) => r.rssi);
-  if (!older.length || !newer.length) return 'steady';
-  const diff = avg(newer) - avg(older);
-  return diff > 3 ? 'approaching' : diff < -3 ? 'away' : 'steady';
-}
-
-// Smoothed signal and shown direction. prev = this bracelet's last result (null when starting fresh).
-// The shown direction changes only after the new one holds TREND_HOLD_MS, so body and phone movement
-// don't flip it every reading.
-export function summarize(history: Reading[], prev: Signal | null) {
-  const t = history[history.length - 1].t;
-  const last = history.slice(-WINDOW).map((r) => r.rssi);
-  const raw = rawTrend(history, t);
-  const shown = prev?.trend ?? 'steady';
-  const nextSince = prev && prev.next === raw ? prev.nextSince : t;
-  const trend: Trend = raw === shown || t - nextSince >= TREND_HOLD_MS ? raw : shown;
-  return { smooth: Math.round(avg(last)), recent: Math.round(avg(last.slice(-3))), trend, next: raw, nextSince };
+// Smoothed signal and direction from the last WINDOW readings.
+// Direction: last 3 readings vs the average of all 6, ±3 dB (the agreed method).
+export function summarize(history: number[]): { smooth: number; recent: number; trend: Trend } {
+  const full = avg(history);
+  const last3 = avg(history.slice(-3));
+  const diff = last3 - full;
+  return { smooth: Math.round(full), recent: Math.round(last3), trend: diff > 3 ? 'approaching' : diff < -3 ? 'away' : 'steady' };
 }
 
 function toBytes(b64: string) {
