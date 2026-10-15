@@ -314,6 +314,13 @@ The work is split by topic: Person 2 builds the base everyone uses (Firebase, ru
 - **Bracelets free themselves after 12 hours:** the hourly cleanup deletes `bracelets/{mac}` locks linked more than 12 hours ago (`BRACELET_LOCK_MS` in `scripts/cleanup.mjs`), for families that left without "end of visit". The member who wore it gets `braceletId: null`, so the family app shows no bracelet next time it opens
 - **`sightings` readable by security only** (was: any volunteer too). Anyone can pick "volunteer" at login, so it exposed where every reported person was heard. The volunteer app never read it; `addSighting` still works
 
+**Changes on 2026-10-15: steadier bracelet readings** (Person 1, `src/ble`, tested on a phone):
+
+- **`smooth` is now the median of the last 6 readings** (was: the average), so one odd reading (a body in the way, a reflection) no longer pulls it. NEAR / FAR limits unchanged
+- **Android scans in low-latency mode:** every bracelet packet is heard instead of a few, so the signal updates sooner
+- **Direction stays 3 s:** the agreed method (last 3 vs average of 6, ±3 dB) flips back to steady as soon as the 6 readings fill with the new level, so approaching / moving away now stays shown 3 s after it was last seen (`TREND_HOLD_MS`); the opposite direction replaces it at once. New `nextSignal()` in `signal.ts` builds each reading; `Signal` has a new `trendAt` field. The volunteer screen gets this through `useBraceletSignal`, no change needed there
+- The laptop scanner (`nasij scanner.py`) does the same
+
 **Changes on 2026-10-14: volunteers relay an emergency press** (Person 1, in Person 3's folder with Person 3's OK):
 
 - **Why:** an elder with no family phone (or no internet) presses the emergency button and nothing happened: only the family app turned a press into a report. The bracelet needs no internet, so now any on-duty volunteer's phone that hears the press sends it

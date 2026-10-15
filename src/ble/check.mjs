@@ -2,7 +2,7 @@
 import assert from 'node:assert';
 import { metresBetween } from '../components/geo.ts';
 import { newPairing, pairStep } from './pairing.ts';
-import { braceletMac, parseAlarm, summarize } from './signal.ts';
+import { braceletMac, nextSignal, parseAlarm, summarize } from './signal.ts';
 import { addHearing, newPress, relayPlace } from './relay.ts';
 
 const MAC = '785005002D12';
@@ -41,7 +41,18 @@ assert.equal(summarize([-80, -80, -80, -70, -70, -70]).trend, 'approaching');
 assert.equal(summarize([-70, -70, -70, -80, -80, -80]).trend, 'away');
 assert.equal(summarize([-70, -71, -70, -71, -70, -71]).trend, 'steady');
 assert.equal(summarize([-70, -72]).smooth, -71);
+assert.equal(summarize([-70, -71, -95, -70, -72, -71]).smooth, -71); // one odd dip ignored (the average would say -75)
 assert.equal(summarize([-80, -80, -80, -70, -70, -70]).recent, -70);
+
+// A step closer then standing still: approaching held 3 s after the readings settle, then steady
+const near = [-50, -50, -50, -50, -50, -50];
+let sig = nextSignal(null, [-60, -60, -60, -50, -50, -50], -50, 0);
+assert.equal(sig.trend, 'approaching');
+sig = nextSignal(sig, near, -50, 2900);
+assert.equal(sig.trend, 'approaching');
+assert.equal(nextSignal(sig, near, -50, 3000).trend, 'steady');
+// Moving away replaces it at once
+assert.equal(nextSignal(sig, [-50, -50, -50, -58, -58, -58], -58, 1000).trend, 'away');
 
 // Packets: MAC from the last 6 bytes of EA00, alarm from FEE0
 const b64 = (bytes) => btoa(String.fromCharCode(...bytes));

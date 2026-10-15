@@ -3,6 +3,7 @@
 # Run:  pip install bleak   then   python nasij_scanner.py
 
 import asyncio
+import statistics
 import time
 from bleak import BleakScanner
 
@@ -14,6 +15,7 @@ NEAR = -65            # stronger than this = near
 FAR = -80             # weaker than this = far
 HOLD = 3              # a new state must last 3 s before we announce it
 GAP = 4               # extra margin needed to leave NEAR or FAR
+TREND_HOLD = 3        # approaching / moving away stays shown 3 s after the readings settle
 
 history = []
 last = {"t": None, "id": None, "rssi": None}
@@ -35,6 +37,9 @@ def identify(adv):
 
 def on_advert(device, adv):
     bracelet = identify(adv)
+    # Like the app: every packet from the bracelet counts (FEE0 alarm info too), not only the EA00 scan response
+    if bracelet is None and device.address.replace(":", "").upper() == BRACELET_MAC:
+        bracelet = BRACELET_MAC
     if bracelet is None:
         return
     now = time.time()
@@ -68,13 +73,14 @@ async def main():
     prev_state = None
     candidate = None
     candidate_since = 0
+    shown = {"trend": "steady", "t": 0}
     try:
         while True:
             await asyncio.sleep(0.5)
             if last["t"] is None:
                 continue
             age = time.time() - last["t"]
-            smooth = round(sum(history) / len(history))
+            smooth = round(statistics.median(history))  # same as the app: one odd reading can't pull it
             raw_state = get_state(age, smooth, prev_state)
 
             # Ignore quick flickers: only switch after the new state holds
@@ -97,6 +103,11 @@ async def main():
             recent = sum(history[-3:]) / len(history[-3:])
             diff = recent - sum(history) / len(history)
             trend = "approaching" if diff > 3 else "moving away" if diff < -3 else "steady"
+            # Same as the app: a seen direction stays 3 s after the readings settle
+            if trend != "steady":
+                shown.update(trend=trend, t=time.time())
+            elif time.time() - shown["t"] < TREND_HOLD:
+                trend = shown["trend"]
 
             bar = "#" * max(0, min(20, (smooth + 100) // 3))
             line = (f"ID {last['id']} | now {last['rssi']:>4} | avg {smooth:>4} "

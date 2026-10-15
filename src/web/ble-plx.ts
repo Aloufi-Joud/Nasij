@@ -7,7 +7,8 @@ export enum State {
   PoweredOff = 'PoweredOff',
   PoweredOn = 'PoweredOn',
 }
-export type Device = { id: string; rssi: number | null; name: string | null; manufacturerData: string | null; serviceData: Record<string, string> | null };
+export const ScanMode = { Opportunistic: -1, LowPower: 0, Balanced: 1, LowLatency: 2 } as const;
+export type Device ={ id: string; rssi: number | null; name: string | null; manufacturerData: string | null; serviceData: Record<string, string> | null };
 export class BleManager {
   onStateChange(cb: (s: State) => void) {
     cb(State.Unsupported);

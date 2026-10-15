@@ -12,7 +12,7 @@ import { zones, type Member, type PasserbyAlert, type Point, type Report, type R
 import { metresBetween } from '../../components/geo';
 import { PAIR_RSSI, newPairing, pairStep, type Pairing } from '../../ble/pairing';
 import { listen, onBluetoothState } from '../../ble/scanner';
-import { LOST_AFTER_MS, WINDOW, braceletMac, cleanMac, parseAlarm, summarize, type Signal, type Trend } from '../../ble/signal';
+import { LOST_AFTER_MS, WINDOW, braceletMac, cleanMac, parseAlarm, nextSignal, type Signal, type Trend } from '../../ble/signal';
 import { ActionSheet } from '../../components/ActionSheet';
 import { Banner } from '../../components/Banner';
 import { pickPhoto } from '../../components/PhotoField';
@@ -259,7 +259,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
       // Coming back after being lost: start the average fresh
       if (tr.latest && t - tr.latest.lastSeen > LOST_AFTER_MS) tr.history = [];
       tr.history = [...tr.history, device.rssi].slice(-WINDOW);
-      tr.latest = { rssi: device.rssi, ...summarize(tr.history), lastSeen: t };
+      tr.latest = nextSignal(tr.latest, tr.history, device.rssi, t);
     });
 
     // iOS stops scanning while the app is in the background: on return, give each bracelet RESUME_GRACE_MS
