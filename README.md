@@ -1,6 +1,6 @@
 # Nasij · نسيج
 
-**No One Is Lost in the Crowd.**
+**A Weave of Safety Around Those You Love.**
 
 Nasij is a smart safety network for large crowded events, designed for Expo 2030 Riyadh. A low-cost, reusable Bluetooth bracelet links a visitor (mainly children and elderly people) to their family, nearby volunteers and the security team in real time.
 
