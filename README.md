@@ -40,7 +40,6 @@ NFC / QR sticker ──► Passer-by report page (web)
 | Backend | Firebase Firestore and Authentication, Firestore security rules |
 | Security dashboard and passer-by page | React and Vite, on Firebase Hosting |
 | Bracelet | MOKO W6R BLE beacon with accelerometer, button, LED and buzzer |
-| Laptop test scanner | Python and `bleak` |
 
 ## Live demo
 
@@ -61,7 +60,6 @@ NFC / QR sticker ──► Passer-by report page (web)
 | `web/report/` | Passer-by report page |
 | `firestore.rules` | Who may read and write what |
 | `scripts/` | Hourly cleanup, sticker tokens, rules tests |
-| `nasij scanner.py` | Laptop scanner that acts as a volunteer device |
 
 ## Run it
 

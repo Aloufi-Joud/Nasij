@@ -1,5 +1,4 @@
 // Nasij family app: several members, one bracelet each. Measures each signal and alerts when one moves away.
-// Same logic as the tested laptop scanner (nasij_scanner.py)
 import { useEffect, useRef, useState } from 'react';
 import { Alert, AppState, Image, Modal, ScrollView, StyleSheet, Vibration, View } from 'react-native';
 import { Text, TextInput } from '../../components/Text';
