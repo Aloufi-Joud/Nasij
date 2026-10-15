@@ -189,6 +189,7 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
   const nearby = useRef<Record<string, { rssi: number; seen: number }>>({});
   const pairing = useRef<{ memberId: string; p: Pairing } | null>(null);
   const autoReport = useRef<(type: 'emergency' | 'fall', mac: string) => void>(() => {});
+  const hasOpenReport = useRef<(mac: string) => boolean>(() => false);
   const link = useRef<(memberId: string, mac: string) => void>(() => {});
   const membersRef = useRef<FamMember[]>([]);
   const meRef = useRef<Point | null>(null);
@@ -334,6 +335,8 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
             if (!isNew) continue;
             // Always log it, even if another alert is already on screen
             addLog(kind, who);
+            // Their case is already open: no new alarm, screen or report for a second press
+            if (hasOpenReport.current(mac)) continue;
             alarm([0, 800, 300, 800, 300, 800]);
             if (!sosRef.current) {
               sosRef.current = true;
@@ -593,6 +596,10 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
     autoReport.current = (type, mac) => {
       const m = members.find((x) => x.mac === mac);
       if (m && !reports[m.id]) sendReport(m, type, m.description, m.photo);
+    };
+    hasOpenReport.current = (mac) => {
+      const m = members.find((x) => x.mac === mac);
+      return !!m && !!reports[m.id];
     };
   });
 
