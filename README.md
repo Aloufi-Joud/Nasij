@@ -43,6 +43,7 @@ NFC / QR sticker ──► Passer-by report page (web)
 
 ## Live demo
 
+- Demo video: Watch the Nasij film: https://drive.google.com/file/d/1YsMjAu2jBYJydPAIrvtPqNbWpT1WqE9s/view?usp=drive_link
 - Passer-by report page: https://nasij-0.web.app
 - Security dashboard: https://nasij-0-dashboard.web.app
 
