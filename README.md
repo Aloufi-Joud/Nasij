@@ -89,5 +89,4 @@ npm run test:rules
 ## Future work
 
 - Bracelets with rotating IDs, so a broadcast cannot be followed or replayed
-- Volunteer accounts approved by event staff
 - Cloud Functions to check the handover code server-side and to delete data the moment a case closes
