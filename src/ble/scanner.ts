@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 import { BleManager, Device, State } from 'react-native-ble-plx';
-import { LOST_AFTER_MS, WINDOW, braceletMac, summarize, type Signal } from './signal';
+import { LOST_AFTER_MS, addReading, braceletMac, summarize, type Reading, type Signal } from './signal';
 
 const manager = new BleManager();
 const listeners = new Set<(device: Device) => void>();
@@ -71,16 +71,17 @@ export function useBraceletSignal(mac: string | null) {
     if (!mac) return;
     // iPhone hides the MAC: learn the phone-side id from EA00, then match the other packets by id
     const ids = new Set<string>();
-    let history: number[] = [];
+    let history: Reading[] = [];
     let latest: Signal | null = null;
 
     const stop = listen((d) => {
       if (braceletMac(d) === mac) ids.add(d.id);
       if (!ids.has(d.id) || d.rssi == null) return;
       const t = Date.now();
-      if (latest && t - latest.lastSeen > LOST_AFTER_MS) history = []; // back after being lost: start fresh
-      history = [...history, d.rssi].slice(-WINDOW);
-      latest = { rssi: d.rssi, ...summarize(history), lastSeen: t };
+      // back after being lost: start fresh
+      if (latest && t - latest.lastSeen > LOST_AFTER_MS) [history, latest] = [[], null];
+      history = addReading(history, d.rssi, t);
+      latest = { rssi: d.rssi, ...summarize(history, latest), lastSeen: t };
     });
     const timer = setInterval(() => {
       setNow(Date.now());

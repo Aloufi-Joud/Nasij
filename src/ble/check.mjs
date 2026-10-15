@@ -2,7 +2,7 @@
 import assert from 'node:assert';
 import { metresBetween } from '../components/geo.ts';
 import { newPairing, pairStep } from './pairing.ts';
-import { braceletMac, parseAlarm, summarize } from './signal.ts';
+import { addReading, braceletMac, parseAlarm, summarize } from './signal.ts';
 import { addHearing, newPress, relayPlace } from './relay.ts';
 
 const MAC = '785005002D12';
@@ -36,12 +36,25 @@ assert.equal(p.pressed, false);
 const d = metresBetween({ latitude: 24.774, longitude: 46.738 }, { latitude: 24.775, longitude: 46.738 });
 assert.ok(Math.abs(d - 111) < 1, String(d));
 
-// Direction (agreed method): last 3 vs average of 6, ±3 dB
-assert.equal(summarize([-80, -80, -80, -70, -70, -70]).trend, 'approaching');
-assert.equal(summarize([-70, -70, -70, -80, -80, -80]).trend, 'away');
-assert.equal(summarize([-70, -71, -70, -71, -70, -71]).trend, 'steady');
-assert.equal(summarize([-70, -72]).smooth, -71);
-assert.equal(summarize([-80, -80, -80, -70, -70, -70]).recent, -70);
+// Direction (agreed method): newer half of the last 5 s vs the older half, ±3 dB, shown once held 2 s.
+// feed(rssi list, ms between readings) runs readings through like a scanner does, returns the last result.
+const feed = (list, gap = 500) => {
+  let h = [];
+  let sig = null;
+  list.forEach((rssi, i) => {
+    h = addReading(h, rssi, i * gap);
+    sig = { rssi, ...summarize(h, sig), lastSeen: i * gap };
+  });
+  return sig;
+};
+const ramp = (from, to, n) => Array.from({ length: n }, (_, i) => from + ((to - from) * i) / (n - 1));
+assert.equal(feed(ramp(-80, -70, 12)).trend, 'approaching'); // slow walk in from far: 10 dB over 6 s
+assert.equal(feed(ramp(-55, -70, 12)).trend, 'away');
+assert.equal(feed([-70, -71, -70, -71, -70, -71, -70, -71, -70, -71]).trend, 'steady');
+// One jump while standing still doesn't flip it: the new direction has to hold 2 s
+assert.equal(feed([...Array(10).fill(-70), -60, -60, -70]).trend, 'steady');
+assert.equal(feed([-70, -72]).smooth, -71);
+assert.equal(feed([-80, -80, -80, -70, -70, -70]).recent, -70);
 
 // Packets: MAC from the last 6 bytes of EA00, alarm from FEE0
 const b64 = (bytes) => btoa(String.fromCharCode(...bytes));

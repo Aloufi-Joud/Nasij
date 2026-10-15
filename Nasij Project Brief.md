@@ -112,7 +112,7 @@ The family side works on a real iPhone with the real bracelet (tested before the
 - [x] Add a family member: name, child or elderly, age (stored in memory until async-storage is added)
 - [x] Live signal reading, smoothed over the last 6 readings
 - [x] Zones with anti-flicker: near (≥ −65 dBm), medium, far (< −80 dBm), signal lost (no packet for 20 s; was 10 s until 2026-10-11, which gave false alarms with the bracelet beside the phone). A new zone must hold 3 s, and leaving near or far needs a 4 dB margin
-- [x] Direction: approaching / moving away / steady (last 3 readings vs the average of 6, ±3 dB). **This is the agreed method for the whole app**, including the volunteer proximity screen
+- [x] Direction: approaching / moving away / steady (since 2026-10-15: average of the newer half of the last 5 s vs the older half, ±3 dB, and a new direction shows only once it has held 2 s; before, last 3 readings vs the average of 6, which missed a slow walk in from far and flipped while standing still). **This is the agreed method for the whole app**, including the volunteer proximity screen. `nasij scanner.py` still uses the old method
 - [x] Map with the parent's location and a circle of estimated distance (TX at 1 m = −59, path loss 2.5)
 - [x] Emergency double press → red alert card, strong vibration, "received" button that does not re-trigger
 - [x] Possible fall (inactivity frame `0x23`) → same alert card with fall wording (needs the bracelet slot enabled)

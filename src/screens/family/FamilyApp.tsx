@@ -12,7 +12,7 @@ import { zones, type Member, type PasserbyAlert, type Point, type Report, type R
 import { metresBetween } from '../../components/geo';
 import { PAIR_RSSI, newPairing, pairStep, type Pairing } from '../../ble/pairing';
 import { listen, onBluetoothState } from '../../ble/scanner';
-import { LOST_AFTER_MS, WINDOW, braceletMac, cleanMac, parseAlarm, summarize, type Signal, type Trend } from '../../ble/signal';
+import { LOST_AFTER_MS, addReading, braceletMac, cleanMac, parseAlarm, summarize, type Reading, type Signal, type Trend } from '../../ble/signal';
 import { ActionSheet } from '../../components/ActionSheet';
 import { Banner } from '../../components/Banner';
 import { pickPhoto } from '../../components/PhotoField';
@@ -86,7 +86,7 @@ function bars(smooth: number) {
 
 // Everything known about one linked bracelet, fed by every packet and read by the 500 ms timer
 type Track = {
-  history: number[];
+  history: Reading[];
   latest: Signal | null;
   // Latest alarm info per slot: 0x21 = double press, 0x23 = no movement (possible fall)
   alarm: Record<number, { triggered: boolean; count: number }>;
@@ -257,9 +257,10 @@ export default function FamilyApp({ shown = true, onSwitchRole, onLogout }: { sh
       if (a && (a.frame === 0x21 || a.frame === 0x23)) tr.alarm[a.frame] = { triggered: a.triggered, count: a.count };
       const t = Date.now();
       // Coming back after being lost: start the average fresh
-      if (tr.latest && t - tr.latest.lastSeen > LOST_AFTER_MS) tr.history = [];
-      tr.history = [...tr.history, device.rssi].slice(-WINDOW);
-      tr.latest = { rssi: device.rssi, ...summarize(tr.history), lastSeen: t };
+      const fresh = !!tr.latest && t - tr.latest.lastSeen > LOST_AFTER_MS;
+      if (fresh) tr.history = [];
+      tr.history = addReading(tr.history, device.rssi, t);
+      tr.latest = { rssi: device.rssi, ...summarize(tr.history, fresh ? null : tr.latest), lastSeen: t };
     });
 
     // iOS stops scanning while the app is in the background: on return, give each bracelet RESUME_GRACE_MS
