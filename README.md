@@ -13,7 +13,7 @@ In big crowds, children wander off and elderly people fall or need help. Familie
 - **Early warning:** the family's phone keeps listening to the bracelet and warns them when the signal weakens, *before* the child is lost.
 - **A search network of volunteers:** if a child is lost, the parent taps "my child is lost". Nearby volunteers get temporary permission to recognise that one bracelet, with the child's description and an "approaching / moving away" indicator.
 - **Emergency button and fall alert:** an elderly wearer double-presses the bracelet to call for help. If they stop moving for 3 minutes, a "please check on them" alert is raised. Any volunteer phone that hears the press can relay it, even without a family phone nearby.
-- **Passers-by can help:** tapping the NFC sticker or scanning the QR on the bracelet opens a page that reports the case, without showing any personal data.
+- **Passers-by can help:** tapping the NFC sticker on the bracelet opens a page that reports the case, without showing any personal data.
 - **Security dashboard:** a live map of open cases, sightings, volunteers and response times.
 - **Safe handover:** a lost child is handed back only after the volunteer enters a code shown in the parent's app.
 
@@ -31,7 +31,7 @@ In big crowds, children wander off and elderly people fall or need help. Familie
 Bracelet (BLE broadcast) ──► Family app ──┐
           │                               ├──► Firebase (Firestore + Auth) ──► Security dashboard (web)
           └──────────► Volunteer app ─────┘
-NFC / QR sticker ──► Passer-by report page (web)
+NFC sticker ──► Passer-by report page (web)
 ```
 
 | Part | Technology |
@@ -45,7 +45,7 @@ NFC / QR sticker ──► Passer-by report page (web)
 
 - Demo video: Watch the Nasij film: https://drive.google.com/file/d/1YsMjAu2jBYJydPAIrvtPqNbWpT1WqE9s/view?usp=drive_link
 - Passer-by report page: https://nasij-0.web.app
-- Security dashboard: https://nasij-0-dashboard.web.app
+- Security dashboard (demo data, no login): https://nasij-0-dashboard.web.app/?demo
 
 ## Project structure
 
