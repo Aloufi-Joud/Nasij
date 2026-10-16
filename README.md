@@ -48,6 +48,8 @@ NFC sticker ──► Passer-by report page (web)
 - Security dashboard (demo data, no login): https://nasij-0-dashboard.web.app/?demo
 - Security dashboard (live data, security account login): https://nasij-0-dashboard.web.app
 
+The live dashboard shows real children's names, photos and locations, so only security accounts can open it. The demo uses made-up data so anyone can try it.
+
 ## Project structure
 
 | Path | What it is |
