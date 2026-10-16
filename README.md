@@ -43,7 +43,7 @@ NFC sticker ──► Passer-by report page (web)
 
 ## Live demo
 
-- Demo video: Watch the Nasij film: https://drive.google.com/file/d/1YsMjAu2jBYJydPAIrvtPqNbWpT1WqE9s/view?usp=drive_link
+- Demo video: Watch the Nasij film: https://drive.google.com/drive/folders/1NGoApsSnBKf49Vu0wRe3OdrJQBPGUC6X
 - Passer-by report page: https://nasij-0.web.app
 - Security dashboard (demo data, no login): https://nasij-0-dashboard.web.app/?demo
 
