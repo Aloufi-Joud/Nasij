@@ -74,8 +74,8 @@ function timeline(r: Report, sightings: Sighting[], passerby: PasserbyReport[], 
   return steps.sort((a, b) => a.at - b.at);
 }
 
-// urgent first (emergency, fall), then oldest first
-const byUrgency = (a: Report, b: Report) => Number(a.type === 'lost') - Number(b.type === 'lost') || a.createdAt - b.createdAt;
+// urgent first (emergency, fall), then newest first
+const byUrgency = (a: Report, b: Report) => Number(a.type === 'lost') - Number(b.type === 'lost') || b.createdAt - a.createdAt;
 
 const rtf = new Intl.RelativeTimeFormat('ar', { numeric: 'auto' });
 const clock = new Intl.DateTimeFormat('ar', { hour: 'numeric', minute: '2-digit' });
