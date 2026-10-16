@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { zones, type ClosedAs, type Health, type PasserbyReport, type Report, type Sighting, type Volunteer } from '../../../src/mock';
+import { zones, type ClosedAs, type Health, type Kind, type PasserbyReport, type Report, type Sighting, type Volunteer } from '../../../src/mock';
 import { minSec } from '../../../src/components/digits';
 import { metresBetween } from '../../../src/components/geo';
 import { DEMO, TYPE, useLive, zoneOf } from './live';
@@ -46,6 +46,7 @@ function useAlarm(open: Report[], now: number, on: boolean) {
 }
 
 const KIND = { child: 'طفل', elder: 'كبير سن' };
+const KIND_GROUP: Record<Kind, string> = { child: 'أطفال', elder: 'كبار السن' };
 const STATUS: Record<Report['status'], string> = { open: 'بانتظار متطوع', searching: 'متطوع يبحث', closed: 'مغلق' };
 const CLOSED: Record<ClosedAs, string> = { found: 'سُلّم للعائلة', security: 'سُلّم لنقطة الأمن', helped: 'سوعد في مكانه', expired: 'أُغلق تلقائيًا' };
 const took = (r: Report) => minSec(r.closedAt! - r.createdAt, ' د', ' ث');
@@ -74,8 +75,8 @@ function timeline(r: Report, sightings: Sighting[], passerby: PasserbyReport[], 
   return steps.sort((a, b) => a.at - b.at);
 }
 
-// urgent first (emergency, fall), then newest first
-const byUrgency = (a: Report, b: Report) => Number(a.type === 'lost') - Number(b.type === 'lost') || b.createdAt - a.createdAt;
+// newest first; the filters above the list narrow it by type and age group
+const byTime = (a: Report, b: Report) => b.createdAt - a.createdAt;
 
 const rtf = new Intl.RelativeTimeFormat('ar', { numeric: 'auto' });
 const clock = new Intl.DateTimeFormat('ar', { hour: 'numeric', minute: '2-digit' });
@@ -117,7 +118,7 @@ function useNow() {
 export default function App() {
   const live = useLive();
   // memo: the map redraws its report markers only when Firestore sends new reports
-  const open = useMemo(() => [...live.reports].sort(byUrgency), [live.reports]);
+  const open = useMemo(() => [...live.reports].sort(byTime), [live.reports]);
   const all = useMemo(() => [...open, ...live.closed], [open, live.closed]);
   const [selected, select] = useSelected(all);
   const found = live.closed.filter((r) => r.closedAs === 'found' || r.closedAs === 'helped');
@@ -134,6 +135,9 @@ export default function App() {
   const caseOf = (v: Volunteer) => open.find((r) => r.assignedVolunteerId === v.id);
   const free = live.volunteers.filter((v) => !caseOf(v));
   const [sound, setSound] = useState(true);
+  const [typeFilter, setTypeFilter] = useState<Report['type'] | null>(null);
+  const [kindFilter, setKindFilter] = useState<Kind | null>(null);
+  const shown = open.filter((r) => (!typeFilter || r.type === typeFilter) && (!kindFilter || r.member.kind === kindFilter));
   useAlarm(open, now, sound);
 
   return (
@@ -201,11 +205,29 @@ export default function App() {
         <aside className="side">
           <section aria-labelledby="h-open">
             <h2 id="h-open">البلاغات المفتوحة</h2>
+            <div className="filters" role="group" aria-label="نوع البلاغ">
+              <button className="chip" aria-pressed={!typeFilter} onClick={() => setTypeFilter(null)}>الكل</button>
+              {(Object.keys(TYPE) as Report['type'][]).map((t) => (
+                <button key={t} className="chip" aria-pressed={typeFilter === t} onClick={() => setTypeFilter(typeFilter === t ? null : t)}>
+                  {TYPE[t]}
+                </button>
+              ))}
+            </div>
+            <div className="filters" role="group" aria-label="الفئة العمرية">
+              <button className="chip" aria-pressed={!kindFilter} onClick={() => setKindFilter(null)}>كل الأعمار</button>
+              {(Object.keys(KIND) as Kind[]).map((k) => (
+                <button key={k} className="chip" aria-pressed={kindFilter === k} onClick={() => setKindFilter(kindFilter === k ? null : k)}>
+                  {KIND_GROUP[k]}
+                </button>
+              ))}
+            </div>
             {open.length === 0 ? (
               <p className="empty">لا توجد بلاغات مفتوحة الآن.</p>
+            ) : shown.length === 0 ? (
+              <p className="empty">لا توجد بلاغات تطابق التصفية.</p>
             ) : (
               <ul className="reports">
-                {open.map((r) => (
+                {shown.map((r) => (
                   <li key={r.id}>
                     <button
                       className={`report t-${r.type}${isLate(r, now) ? ' late' : ''}`}

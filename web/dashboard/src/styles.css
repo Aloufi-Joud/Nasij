@@ -106,6 +106,14 @@ ul { list-style: none; margin: 0; padding: 0; }
 
 /* Report list: white tiles with a coloured edge for the type */
 .reports { display: grid; gap: 10px; }
+/* Filters above the list: one row for the type, one for the age group */
+.filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.filters + .filters { margin-bottom: 14px; }
+.chip {
+  border: 1.5px solid var(--border); background: var(--card); color: var(--muted);
+  border-radius: 999px; padding: 4px 12px; font-size: 13px; font-weight: 600;
+}
+.chip[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: #fff; }
 .report {
   position: relative; width: 100%; text-align: start; display: grid; gap: 2px;
   background: var(--card); border: 1.5px solid transparent; border-radius: var(--r-tile);
@@ -211,6 +219,7 @@ button.feed-row:hover { color: var(--primary); text-decoration: underline; text-
 @media (hover: hover) and (pointer: fine) {
   .report:hover { box-shadow: 0 6px 16px rgb(14 63 60 / 0.1); }
   button.row:hover { background: var(--techBg); }
+  .chip:hover:not([aria-pressed="true"]) { border-color: var(--primary); color: var(--primary); }
   .ghost:hover:not(:disabled) { background: var(--mint); }
   .primary:hover:not(:disabled), .login button[type="submit"]:hover:not(:disabled) { background: #0A302E; }
 }
