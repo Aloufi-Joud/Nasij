@@ -140,7 +140,7 @@ export default function LoginScreen({ onLogin }: { onLogin: (role: Role) => void
       </FadeIn>
       <FadeIn delay={60}>
         <Text style={s.name}>{tr('نسيج', 'Nasij')}</Text>
-        <Text style={s.tagline}>{tr('ما أحد يضيع في الزحام', 'No one gets lost in the crowd')}</Text>
+        <Text style={s.tagline}>{tr('نسيجٌ من الأمان حول من تحب', 'A weave of safety around the ones you love')}</Text>
       </FadeIn>
 
       <FadeIn delay={120}>
