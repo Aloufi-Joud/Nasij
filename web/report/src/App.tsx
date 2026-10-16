@@ -15,7 +15,8 @@ type Stage = 'ready' | 'sending' | 'slow' | 'sent' | 'failed';
 
 const AMBULANCE = '997';
 const SLOW_AFTER_MS = 12_000;
-const DEMO = new URLSearchParams(window.location.search).has('demo');
+// Never with a sticker token: a real report must not be dropped because ?demo was added to its link
+const DEMO = new URLSearchParams(window.location.search).has('demo') && !tokenFromUrl();
 
 function tokenFromUrl() {
   const url = new URL(window.location.href);
