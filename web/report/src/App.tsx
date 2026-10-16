@@ -66,7 +66,7 @@ export default function App() {
         <span className="logo" aria-hidden="true">ن</span>
         <span>
           <strong>نسيج</strong>
-          <small>لا أحد يضيع في الزحام</small>
+          <small>نسيجٌ من الأمان حول من تحب</small>
         </span>
       </header>
 
