@@ -1,8 +1,9 @@
 // Live data for the security dashboard, straight from Firestore, plus the site geometry.
 // Security is allowed to see everything, health included.
 import { useEffect, useState } from 'react';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
-import { db } from '../../../src/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import { collection, doc, getDoc, onSnapshot, query, where } from 'firebase/firestore';
+import { auth, db } from '../../../src/firebase';
 import { assignReport, getReportHealth, getReportPhone, getReportPhoto, reuniteAtSecurity, subscribeOpenReports } from '../../../src/firebase/reports';
 import { zones, members as mockMembers, reports as mockReports, volunteers as mockVolunteers, passerbyReports as mockPasserby, type Member, type PasserbyAlert, type PasserbyReport, type Point, type Report, type Sighting, type Volunteer, type Zone } from '../../../src/mock';
 import { metresBetween } from '../../../src/components/geo';
@@ -98,8 +99,41 @@ const WALK = 2; // metres per 250 ms tick: a brisk walk sped up for the demo
 const HEAR = 40; // the volunteer's phone picks up the bracelet this close
 const HELP_MS = 5000; // after reaching the person, the volunteer closes the case this much later
 
+// Signed in as security (on the normal link first: the browser keeps the session), the demo also shows the app's
+// real open reports. Each one joins the made-up cases once: assigning and closing it stays in this page, Firestore is untouched
+function useRealReports(onChange: (reports: Report[]) => void) {
+  useEffect(() => {
+    let stop = () => {};
+    const off = onAuthStateChanged(auth, async (u) => {
+      stop();
+      stop = () => {};
+      onChange([]);
+      if (!u) return;
+      const role = await getDoc(doc(db, 'users', u.uid)).then((d) => d.data()?.role, () => null);
+      if (role === 'security' && auth.currentUser?.uid === u.uid) stop = subscribeOpenReports(onChange);
+    });
+    return () => {
+      off();
+      stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+}
+
+// A report made away from the site (testing from home) is moved into a zone, so the demo volunteers can walk to it
+const onSite = (r: Report): Report =>
+  r.location && zoneOf(r.location) ? r : { ...r, location: zoneAt(r.id.charCodeAt(0) % zones.length, 70, r.id.charCodeAt(1) * 7) };
+
 function useMock() {
   const [reports, setReports] = useState(demoReports);
+  const [seen] = useState(() => new Set<string>());
+  useRealReports((real) => {
+    const ids = new Set(real.map((r) => r.id));
+    const fresh = real.filter((r) => !seen.has(r.id)).map(onSite);
+    fresh.forEach((r) => seen.add(r.id));
+    // one the family cancelled or closed in the app leaves too, unless a demo volunteer already took it
+    setReports((rs) => [...rs.filter((r) => !seen.has(r.id) || ids.has(r.id) || r.status !== 'open'), ...fresh]);
+  });
   const [closed, setClosed] = useState(demoClosed);
   const [volunteers, setVolunteers] = useState(demoVolunteers);
   const [loaded] = useState(Date.now);
@@ -163,9 +197,10 @@ function useMock() {
     assign: async (id: string, volunteerId: string) =>
       setReports((rs) => rs.map((r) => (r.id === id ? { ...r, status: 'searching' as const, assignedVolunteerId: volunteerId, acceptedAt: Date.now() } : r))),
     reunite: async (id: string) => setClosed((cs) => cs.map((r) => (r.id === id ? { ...r, reunitedAt: Date.now(), photo: null } : r))),
-    healthOf: async (id: string) => [...reports, ...closed].find((r) => r.id === id)?.health ?? null,
-    phoneOf: async () => '0500000000',
-    photoOf: async (id: string) => [...reports, ...closed].find((r) => r.id === id)?.photo ?? null,
+    // a real report's health, phone and photo come from Firestore (security may read them)
+    healthOf: async (id: string) => (seen.has(id) ? getReportHealth(id) : [...reports, ...closed].find((r) => r.id === id)?.health ?? null),
+    phoneOf: async (id: string) => (seen.has(id) ? getReportPhone(id) : '0500000000'),
+    photoOf: async (id: string) => (seen.has(id) ? getReportPhoto(id) : [...reports, ...closed].find((r) => r.id === id)?.photo ?? null),
   };
   return { reports, closed, sightings, volunteers, passerby: mockPasserby, alerts: [] as (PasserbyAlert & { id: string })[], events, memberOf, ...actions };
 }
