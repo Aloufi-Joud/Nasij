@@ -44,7 +44,7 @@ NFC sticker ──► Passer-by report page (web)
 ## Live demo
 
 - Demo video: Watch the Nasij film: https://drive.google.com/drive/folders/1NGoApsSnBKf49Vu0wRe3OdrJQBPGUC6X
-- Passer-by report page: https://nasij-0.web.app
+- Passer-by report page (sample bracelet, sends nothing): https://nasij-0.web.app/?demo
 - Security dashboard (demo data, no login): https://nasij-0-dashboard.web.app/?demo
 
 ## Project structure
@@ -91,3 +91,4 @@ npm run test:rules
 
 - Bracelets with rotating IDs, so a broadcast cannot be followed or replayed
 - Cloud Functions to check the handover code server-side and to delete data the moment a case closes
+- A heart-rate sensor in the bracelet, so families of children with health conditions get an alert when it reads abnormal

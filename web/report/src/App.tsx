@@ -4,6 +4,7 @@
 // nobody can report bracelets by guessing their printed numbers from home.
 // No login, and it shows no personal data: it only sends the bracelet number, the time and,
 // if the passer-by allows it, their location. Security matches the number to the member.
+// ?demo shows the page with a sample bracelet and sends nothing (the README links it).
 import { useEffect, useState } from 'react';
 import { braceletOfToken, createPasserbyReport } from '../../../src/firebase/passerby';
 import type { Point } from '../../../src/mock';
@@ -14,6 +15,7 @@ type Stage = 'ready' | 'sending' | 'slow' | 'sent' | 'failed';
 
 const AMBULANCE = '997';
 const SLOW_AFTER_MS = 12_000;
+const DEMO = new URLSearchParams(window.location.search).has('demo');
 
 function tokenFromUrl() {
   const url = new URL(window.location.href);
@@ -42,6 +44,7 @@ export default function App() {
   const busy = stage === 'sending' || stage === 'slow';
 
   useEffect(() => {
+    if (DEMO) return setBracelet('785005002D12');
     braceletOfToken(token).then(setBracelet, () => setBracelet(null));
   }, [token]);
 
@@ -51,7 +54,7 @@ export default function App() {
     const slow = setTimeout(() => setStage((s) => (s === 'sending' ? 'slow' : s)), SLOW_AFTER_MS);
     try {
       const location = withLocation ? await whereAmI() : null;
-      await createPasserbyReport(token, location);
+      if (!DEMO) await createPasserbyReport(token, location);
       setStage('sent');
     } catch {
       setStage('failed');
